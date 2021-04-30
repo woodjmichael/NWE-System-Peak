@@ -25,12 +25,13 @@ def accuracy(dsA,dsB,abs_tol=1):
 def import_data(source):
     filename = 'Data/ca_'+source+'.csv'
 
-    df = pd.read_csv(   filename,                    
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
                         parse_dates=['Date'],
-                        index_col=['Date'])#.loc['2007-7-1':'2007-7-2']
+                        index_col=['Date'])
 
     vec = []
-    for row in df.iterrows():
+    for _,row in df.iterrows():
         if np.isnan(row['2nd HR 2']):
             for h in range(1,25): 
                 if np.isnan(row['Hr %d'%h]): pass
