@@ -32,8 +32,8 @@ def generate_single_time_series(b, n): # batch size, n_steps
     return s.reshape(b*n,1)[:,0] # 1d
 
 
-def batchify_single_series(sv,b,n):
-    s = sv.reshape(b,n)
+def batchify_single_series(sv,b,no):
+    s = sv.reshape(b,no)
     return s[..., np.newaxis].astype(np.float32)
 
 
@@ -45,6 +45,9 @@ def batchify_single_series(sv,b,n):
 #     return s[..., np.newaxis].astype(np.float32)
 
 def mean_squared_error(y,y_hat):
+    global dmax
+    y = y * dmax
+    y_hat = y_hat * dmax
     e = y - y_hat
     e2 = e * e
     return np.mean(e2)
@@ -61,22 +64,48 @@ def linear_regression(X_train,y_train,n,h,o):
     keras.layers.Dense(o),
     ])
     reg.compile(loss='mse',optimizer='Adam')
-    reg.fit(X_train,y_train,epochs=20,verbose=0)
+    reg.fit(X_train,y_train,epochs=2000,verbose=0)
     y_pred = reg.predict(X_valid)
     mse = np.mean(mean_squared_error(y_valid,y_pred))    
     return y_pred, mse
 
 def deep_rnn(X_train,y_train,n,h,o):
     rnn = keras.models.Sequential([
-    keras.layers.SimpleRNN(20,return_sequences=True,input_shape=[None,1]),
-    keras.layers.SimpleRNN(20),
+    keras.layers.SimpleRNN(100,return_sequences=True,input_shape=[None,1]),
+    keras.layers.SimpleRNN(100),
     keras.layers.Dense(o),
     ])
     rnn.compile(loss='mse',optimizer='Adam')
-    rnn.fit(X_train,y_train,epochs=20,verbose=0)
+    rnn.fit(X_train,y_train,epochs=2000,verbose=0)
     y_pred = rnn.predict(X_valid)
     mse = np.mean(mean_squared_error(y_valid,y_pred))  
-    return y_pred, mse  
+    return y_pred, mse
+
+def plot_all(X_valid,y_valid,y_valid_pred,n,h,o,k):
+    t1 = np.arange(0,n)
+    t2 = np.arange(n,n+o)
+    
+    plt.plot(t1, X_valid[k,:,0],            label='X')
+
+    plt.plot(t2, y_valid[k,:],              label='y')
+    plt.plot(t2, y_valid_pred['np'][k,:],   label='y^ naive persistence')
+    plt.plot(t2, y_valid_pred['reg'][k,:],  label='y^ regression')
+    plt.plot(t2, y_valid_pred['rnn'][k,:],  label='y^ rnn')
+
+    plt.title('validation set')    
+    plt.legend()
+    plt.show()    
+
+def print_inputs(X_train,y_train,b,n,h,o):
+    print('')
+    print('Batches',b)
+    print('Input dimension',n)
+    print('Forecast horizon',h)
+    print('Output dimension',o)
+    print('X_train shape',X_train.shape)
+    print('y_train shape',y_train.shape)
+    print('')    
+
 
 #
 # setup
@@ -85,65 +114,57 @@ def deep_rnn(X_train,y_train,n,h,o):
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 #
-# new data
+# data
 #
 
 df = import_data('actual')
-df.columns = [['y']]  
+dv = df.values[:,0]
 
-print(df.describe)
-quit()
+b = 2020 # number batches
+n = 36 # input dimension
+h = 0 # forecast horizon
+o = 24 # output dimension
 
-#
-# data
-#     
+d_fullscale = batchify_single_series(dv,b,n+o)
 
-b = 10000 # batches
-n = 50 # batch size
-h = 0 # forecast horizon (timesteps skipped between X and y)
-o = 1 # model output size
+dmax = np.max(d_fullscale)
+d = d_fullscale / dmax
 
+X_train, y_train = d[:1500,     :n-h], d[:1500,     -o:, 0]
+X_valid, y_valid = d[1500:1750, :n-h], d[1500:1750, -o:, 0]
+X_test,  y_test  = d[1750:,     :n-h], d[1750:,     -o:, 0]
 
-#s = generate_time_series(10000, n + o) # s[batches,timesteps]
-sv = generate_single_time_series(b, n + o) # s[batches,timesteps]
-s = batchify_single_series(sv, b, n + o)
+print_inputs(X_train,y_train,b,n,h,o)
 
-X_train, y_train = s[:7000, :n-h],     s[:7000,     -o:, 0]
-X_valid, y_valid = s[7000:9000, :n-h], s[7000:9000, -o:, 0]
-X_test,  y_test  = s[9000:, :n-h],     s[9000:,     -o:, 0]
-
-print('')
-print('Batches',b)
-print('Batch size',n)
-print('Forecast horizon',h)
-print('Model output size',o)
-print('X_train shape',X_train.shape)
-print('y_train shape',y_train.shape)
-print('')
-
-y_pred, mse = {}, {}
+y_valid_pred, mse = {}, {}
 
 #
 # model: naive persistance
 #
 
-y_pred['naive'], mse['naive'] = naive_persistence(X_valid, y_valid, o)
+y_valid_pred['np'], mse['np'] = naive_persistence(X_valid, y_valid, o)
 
 
 #
 # model: linear regression
 #
 
-y_pred['reg'], mse['reg'] = linear_regression(X_valid, y_valid, n, h, o)
+y_valid_pred['reg'], mse['reg'] = linear_regression(X_valid, y_valid, n, h, o)
 
 #
 # model: deep rnn
 #
 
-y_pred['rnn'], mse['rnn'] = deep_rnn(X_valid, y_valid, n, h, o)
+y_valid_pred['rnn'], mse['rnn'] = deep_rnn(X_valid, y_valid, n, h, o)
 
 #
 # results
 #
 
 print('mse',mse,'\n')
+
+plot_all(X_valid,y_valid,y_valid_pred,n,h,o,0)
+plot_all(X_valid,y_valid,y_valid_pred,n,h,o,1)
+plot_all(X_valid,y_valid,y_valid_pred,n,h,o,2)
+plot_all(X_valid,y_valid,y_valid_pred,n,h,o,3)
+plot_all(X_valid,y_valid,y_valid_pred,n,h,o,4)

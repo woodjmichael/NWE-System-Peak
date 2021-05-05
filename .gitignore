@@ -2,7 +2,7 @@
 # Edit at https://www.gitignore.io/?templates=macos
 
 Data
-*sandbox.py
+sandbox.py
 
 ### macOS ###
 # General
