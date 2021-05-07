@@ -6,13 +6,18 @@
 
 # 'base' conda env
 
-import os
+import os, sys
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from _nwe import import_data
+import datetime as dt
+from pprint import pprint
 
+#
+# functions
+#
 
 def generate_time_series(b, n): # batch size, n_steps
     f1, f2, o1, o2 = np.random.rand(4, b, 1)
@@ -31,18 +36,9 @@ def generate_single_time_series(b, n): # batch size, n_steps
 
     return s.reshape(b*n,1)[:,0] # 1d
 
-
 def batchify_single_series(sv,b,no):
     s = sv.reshape(b,no)
     return s[..., np.newaxis].astype(np.float32)
-
-
-# def batchify_time_series(b,n):
-#     t = np.linspace(0,1,b*n)
-#     s = 0.5 * np.sin((t - o1) * (f1 * 10 + 10)) # wave 1
-#     s += 0.2 * np.sin((t - o2) * (f2 * 20 + 20)) # + wave 2
-#     s += 0.1 * (np.random.rand(b, n) - 0.5) # + noise
-#     return s[..., np.newaxis].astype(np.float32)
 
 def mean_squared_error(y,y_hat):
     global dmax
@@ -52,60 +48,130 @@ def mean_squared_error(y,y_hat):
     e2 = e * e
     return np.mean(e2)
 
-def naive_persistence(X_valid,y_valid,o):
-    y_pred = X_valid[:,-o:,0]
-    mse = np.mean(mean_squared_error(y_valid,y_pred))
+def root_mean_squared_error(y,y_hat):
+    mse = mean_squared_error(y,y_hat)
+    return np.sqrt(mse)
 
-    return y_pred, mse
-
-def linear_regression(X_train,y_train,n,h,o):
-    reg = keras.models.Sequential([
-    keras.layers.Flatten(input_shape=[n-h,1]),
-    keras.layers.Dense(o),
-    ])
-    reg.compile(loss='mse',optimizer='Adam')
-    reg.fit(X_train,y_train,epochs=2000,verbose=0)
-    y_pred = reg.predict(X_valid)
-    mse = np.mean(mean_squared_error(y_valid,y_pred))    
-    return y_pred, mse
-
-def deep_rnn(X_train,y_train,n,h,o):
-    rnn = keras.models.Sequential([
-    keras.layers.SimpleRNN(100,return_sequences=True,input_shape=[None,1]),
-    keras.layers.SimpleRNN(100),
-    keras.layers.Dense(o),
-    ])
-    rnn.compile(loss='mse',optimizer='Adam')
-    rnn.fit(X_train,y_train,epochs=2000,verbose=0)
-    y_pred = rnn.predict(X_valid)
-    mse = np.mean(mean_squared_error(y_valid,y_pred))  
-    return y_pred, mse
-
-def plot_all(X_valid,y_valid,y_valid_pred,n,h,o,k):
-    t1 = np.arange(0,n)
-    t2 = np.arange(n,n+o)
-    
-    plt.plot(t1, X_valid[k,:,0],            label='X')
-
-    plt.plot(t2, y_valid[k,:],              label='y')
-    plt.plot(t2, y_valid_pred['np'][k,:],   label='y^ naive persistence')
-    plt.plot(t2, y_valid_pred['reg'][k,:],  label='y^ regression')
-    plt.plot(t2, y_valid_pred['rnn'][k,:],  label='y^ rnn')
-
-    plt.title('validation set')    
-    plt.legend()
-    plt.show()    
-
-def print_inputs(X_train,y_train,b,n,h,o):
+def print_inputs(X_train,y_train,b,n,h,o,u):
     print('')
     print('Batches',b)
     print('Input dimension',n)
     print('Forecast horizon',h)
     print('Output dimension',o)
+    print('RNN units',u)
     print('X_train shape',X_train.shape)
     print('y_train shape',y_train.shape)
-    print('')    
 
+    print('')     
+
+def naive_persistence(X_valid,y_valid,o):
+    y_pred = X_valid[:,-o:,0]
+    rmse = np.mean(root_mean_squared_error(y_valid,y_pred))
+    return y_pred, rmse    
+
+def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
+    t0 = dt.datetime.now()
+    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+
+    model = keras.models.Sequential([
+    keras.layers.Flatten(input_shape=[n-h,1]),
+    keras.layers.Dense(o),
+    ])
+    model.compile(loss='mse',optimizer='Adam')
+    hx = model.fit(X_train,y_train,epochs=e,verbose=0)
+    y_pred = model.predict(X_valid)
+    rmse = np.mean(root_mean_squared_error(y_valid,y_pred))
+    skill = rmse_np - rmse
+
+    t = dt.datetime.now() - t0
+    ret = {'epochs':e,'units':0,'skill_np':skill,'runtime':t}
+    return ret, y_pred, hx
+
+def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
+    t0=dt.datetime.now()
+    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+
+    model = keras.models.Sequential([
+        keras.layers.SimpleRNN(units=u,return_sequences=True,input_shape=[None,1]),
+        keras.layers.SimpleRNN(units=u),
+        keras.layers.Dense(o),
+    ])
+    model.compile(loss='mse',optimizer='Adam')
+    hx = model.fit(X_train,y_train,epochs=e,verbose=0)
+    y_pred = model.predict(X_valid)
+    rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
+    skill = rmse_np - rmse
+
+    t =  dt.datetime.now() - t0
+    ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
+    return ret, y_pred, hx
+
+def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
+    t0=dt.datetime.now()
+    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+
+    model = keras.models.Sequential([
+        keras.layers.LSTM(units=u,return_sequences=True,input_shape=[None,1]),
+        keras.layers.LSTM(units=u),
+        keras.layers.Dense(o),
+    ])
+    model.compile(loss='mse',optimizer='Adam')
+    hx = model.fit(X_train,y_train,epochs=e,verbose=0)
+    y_pred = model.predict(X_valid)
+    rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
+    skill = rmse_np - rmse
+
+    t=dt.datetime.now() - t0
+    ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
+    return ret, y_pred, hx
+
+def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u):
+    t0=dt.datetime.now()
+    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+
+    model = keras.models.Sequential([
+        keras.layers.LSTM(u, return_sequences=True, input_shape=[None, 1]),
+        keras.layers.LSTM(u, return_sequences=True),
+        keras.layers.TimeDistributed(keras.layers.Dense(o))
+    ])
+
+    model.compile(loss="mse", optimizer="adam", metrics=[last_time_step_mse])
+    hx = model.fit(X_train, Y_train, epochs=20,
+                    validation_data=(X_valid, Y_valid))
+
+    y_pred = model.predict(X_valid)
+    rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
+    skill = 0#rmse_np - rmse
+
+    t=dt.datetime.now() - t0
+    ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
+    return ret, y_pred, hx    
+
+def plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,k):
+    t1, t2 = np.arange(0,n), np.arange(n,n+o) 
+
+    y_valid_pred['np'],  __ = naive_persistence(X_valid, y_valid, o)
+    
+    plt.plot(t1, X_valid[k,:,0],                label='X')
+    plt.plot(t2, y_valid[k,:],                  label='y')
+    plt.plot(t2, y_valid_pred['np'][k,:],       label='y^ naive persistence')
+    plt.plot(t2, y_valid_pred['reg'][k,:],      label='y^ regression')
+    plt.plot(t2, y_valid_pred['rnn'][k,:],      label='y^ rnn')
+    plt.plot(t2, y_valid_pred['lstm'][k,:],     label='y^ lstm')
+
+    plt.title('validation set')    
+    plt.legend()
+    plt.show()    
+
+def plot_training(hx):
+    #plt.figure(num=None, figsize=(10, 7), dpi=160)
+    plt.plot(hx.history['loss']) 
+    #plt.plot(hx.history['val_loss'])
+    plt.title('Training')
+    plt.ylabel('Model Loss (nMSE)')
+    plt.xlabel('Epoch')
+    #plt.legend(['Training', 'Validation'], loc='upper right')
+    plt.show()   
 
 #
 # setup
@@ -117,54 +183,60 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # data
 #
 
-df = import_data('actual')
-dv = df.values[:,0]
+dv = import_data('actual').values[:,0] # data vector
 
-b = 2020 # number batches
-n = 36 # input dimension
-h = 0 # forecast horizon
+b = 2020 # batches
+n = 36 # number of timesteps (input)
+h = 0 # horizon of forecast
 o = 24 # output dimension
+u = 50 # rnn/lstm units
+e = 1000
+epochs = [25,100,500,1000] 
 
 d_fullscale = batchify_single_series(dv,b,n+o)
-
 dmax = np.max(d_fullscale)
 d = d_fullscale / dmax
 
-X_train, y_train = d[:1500,     :n-h], d[:1500,     -o:, 0]
-X_valid, y_valid = d[1500:1750, :n-h], d[1500:1750, -o:, 0]
-X_test,  y_test  = d[1750:,     :n-h], d[1750:,     -o:, 0]
+s1 = int(.8*b) # split 1 (valid)
+s2 = int(.9*b) # split 2 (test)
 
-print_inputs(X_train,y_train,b,n,h,o)
+X_train, y_train = d[:s1,   :n-h], d[:s1,   -o:, 0] # features, targets 
+X_valid, y_valid = d[s1:s2, :n-h], d[s1:s2, -o:, 0]
+X_test,  y_test  = d[s2:,   :n-h], d[s2:,   -o:, 0]
 
-y_valid_pred, mse = {}, {}
-
-#
-# model: naive persistance
-#
-
-y_valid_pred['np'], mse['np'] = naive_persistence(X_valid, y_valid, o)
+print_inputs(X_train,y_train,b,n,h,o,u)
 
 
 #
-# model: linear regression
+# models
 #
 
-y_valid_pred['reg'], mse['reg'] = linear_regression(X_valid, y_valid, n, h, o)
+res, y_valid_pred, hx, = {}, {}, {}
 
-#
-# model: deep rnn
-#
+res['reg'],y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
-y_valid_pred['rnn'], mse['rnn'] = deep_rnn(X_valid, y_valid, n, h, o)
+res['rnn'],y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+
+for e in epochs:
+    name = 'lstm %d'%e
+    res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+
+
 
 #
 # results
 #
 
-print('mse',mse,'\n')
+df = pd.DataFrame(data=res).drop(['runtime'])
+print(df.to_string())
 
-plot_all(X_valid,y_valid,y_valid_pred,n,h,o,0)
-plot_all(X_valid,y_valid,y_valid_pred,n,h,o,1)
-plot_all(X_valid,y_valid,y_valid_pred,n,h,o,2)
-plot_all(X_valid,y_valid,y_valid_pred,n,h,o,3)
-plot_all(X_valid,y_valid,y_valid_pred,n,h,o,4)
+for e in epochs:
+    plot_training(hx['lstm %d'%e])
+
+#plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,1)
+
+#
+# outro
+#
+
+sys.stdout.write('\a') # beep  
