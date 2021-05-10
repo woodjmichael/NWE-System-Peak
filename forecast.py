@@ -19,6 +19,19 @@ from pprint import pprint
 # functions
 #
 
+def import_data_lajolla():
+    filename = '/Users/mjw/Google Drive/Data/lajolla_load_processed.csv'
+
+    fields = ['Datetime (UTC-8)','Load (kW)']
+
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Datetime (UTC-8)'],
+                        index_col=['Datetime (UTC-8)'],
+                        usecols=fields)   
+
+    return df
+
 def generate_time_series(b, n): # batch size, n_steps
     f1, f2, o1, o2 = np.random.rand(4, b, 1)
     t = np.linspace(0,1,n)
@@ -58,10 +71,9 @@ def print_inputs(X_train,y_train,b,n,h,o,u):
     print('Input dimension',n)
     print('Forecast horizon',h)
     print('Output dimension',o)
-    print('RNN units',u)
+    print('Units',u)
     print('X_train shape',X_train.shape)
     print('y_train shape',y_train.shape)
-
     print('')     
 
 def naive_persistence(X_valid,y_valid,o):
@@ -99,6 +111,8 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)
+    
+    print('rnn eval',model.evaluate(X_valid, y_valid)) 
     rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
     skill = rmse_np - rmse
 
@@ -118,6 +132,8 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)
+
+    print('lstm eval',model.evaluate(X_valid, y_valid)) 
     rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
     skill = rmse_np - rmse
 
@@ -173,6 +189,9 @@ def plot_training(hx):
     #plt.legend(['Training', 'Validation'], loc='upper right')
     plt.show()   
 
+
+################ main execution ################
+
 #
 # setup
 #     
@@ -185,13 +204,14 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
 dv = import_data('actual').values[:,0] # data vector
 
-b = 2020 # batches
-n = 36 # number of timesteps (input)
+#df = import_data_lajolla()
+
+b = 2525 # batches
+n = 24 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 24 # output dimension
 u = 50 # rnn/lstm units
-e = 1000
-epochs = [25,100,500,1000] 
+e = 5000
 
 d_fullscale = batchify_single_series(dv,b,n+o)
 dmax = np.max(d_fullscale)
@@ -213,27 +233,38 @@ print_inputs(X_train,y_train,b,n,h,o,u)
 
 res, y_valid_pred, hx, = {}, {}, {}
 
-res['reg'],y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
+res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
-res['rnn'],y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+res['rnn'], y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
 
-for e in epochs:
-    name = 'lstm %d'%e
-    res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+res['lstm'],y_valid_pred['lstm'],hx['lstm'] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
 
+#res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u)
+
+# units = [100,200,300,400,500,600,700,800,900,1000] 
+# for u in units:
+#     name1 = 'rnn %d'%u
+#     name2 = 'lstm %d'%u
+#     res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+#     res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+
+# epochs = [25,100,500,1000]
+# for e in epochs:
+#     name = 'lstm %d'%e
+#     res[name], y_valid_pred[name], hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+#     plot_training(hx[name])
 
 
 #
 # results
 #
 
-df = pd.DataFrame(data=res).drop(['runtime'])
+df = pd.DataFrame(data=res).drop(['runtime']).T
 print(df.to_string())
 
-for e in epochs:
-    plot_training(hx['lstm %d'%e])
-
 #plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,1)
+
+#plot_training(hx['lstm'])
 
 #
 # outro
