@@ -1,4 +1,5 @@
 # forecast.py
+
 # python 3.8.3
 # pandas 1.0.5
 # tensorflow 2.3.1
@@ -12,7 +13,7 @@ import numpy as np
 from scipy.stats import moment, skew, kurtosis
 import matplotlib.pyplot as plt
 from tensorflow import keras
-from _nwe import import_data
+from nwe import import_data
 import datetime as dt
 from pprint import pprint
 
@@ -55,9 +56,9 @@ def batchify_single_series(sv,b,no):
     return s[..., np.newaxis].astype(np.float32)
 
 def mean_squared_error(y,y_hat):
-    global dmax
-    y = y * dmax
-    y_hat = y_hat * dmax
+    global Lmax
+    y = y * Lmax
+    y_hat = y_hat * Lmax
     e = y - y_hat
     e2 = e * e
     return np.mean(e2)
@@ -66,13 +67,15 @@ def root_mean_squared_error(y,y_hat):
     mse = mean_squared_error(y,y_hat)
     return np.sqrt(mse)
 
-def print_inputs(X_train,y_train,b,n,h,o,u):
+def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast):
     print('')
+    print('Forecast',fcast)
     print('Batches',b)
     print('Input dimension',n)
     print('Forecast horizon',h)
     print('Output dimension',o)
     print('Units',u)
+    print('Epochs',e)
     print('X_train shape',X_train.shape)
     print('y_train shape',y_train.shape)
     print('')     
@@ -80,15 +83,33 @@ def print_inputs(X_train,y_train,b,n,h,o,u):
 def naive_persistence(X_valid,y_valid,o):
     y_pred = X_valid[:,-o:,0]
     rmse = np.mean(root_mean_squared_error(y_valid,y_pred))
-    return y_pred, rmse    
+    acc  = accuracy_of_onehot(y_valid,y_pred)
+    return y_pred, rmse, acc    
+
+def convert_to_onehot(y):
+    y2 = np.zeros((y.shape[0],y.shape[1]),dtype=int)
+    for i in range(y.shape[0]):
+        y2[i,np.argmax(y[i,:])] = 1
+    return y2
+
+def accuracy_of_onehot(y_true,y_pred):
+    right = []
+    batches = y_true.shape[0]
+    for i in range(batches):
+        right.append(np.array_equal(y_true[i,:], y_pred[i,:])) # 'True' if the rows are equal
+    return sum(right)/batches
+
+def nwe_forecast_accuracy(y_true, y_pred):
+    y_pred = convert_to_onehot(y_pred)
+    return accuracy_of_onehot(y_true, y_pred)
 
 def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
     t0 = dt.datetime.now()
-    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, __ = naive_persistence(X_valid, y_valid, o)
 
     model = keras.models.Sequential([
-    keras.layers.Flatten(input_shape=[n-h,1]),
-    keras.layers.Dense(o),
+        keras.layers.Flatten(input_shape=[n-h,1]),
+        keras.layers.Dense(o),
     ])
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
@@ -98,56 +119,77 @@ def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
 
     t = dt.datetime.now() - t0
     ret = {'epochs':e,'units':0,'skill_np':skill,'runtime':t}
-    return ret, y_pred, hx
+    return ret, y_pred, hx    
 
-def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
+def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
     t0=dt.datetime.now()
-    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
 
     model = keras.models.Sequential([
-        keras.layers.SimpleRNN(units=u,return_sequences=True,input_shape=[None,1]),
+        keras.layers.SimpleRNN(units=u,return_sequences=True,input_shape=[None,X_valid.shape[2]]),
         keras.layers.SimpleRNN(units=u),
         keras.layers.Dense(o),
     ])
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
-    y_pred = model.predict(X_valid)
-    
+    y_pred = model.predict(X_valid)    
     print('rnn eval',model.evaluate(X_valid, y_valid)) 
-    rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
-    skill = rmse_np - rmse
+
+    if fcast!='peak':
+        rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
+        skill = rmse_np - rmse
+    if fcast=='peak':
+        y_pred = convert_to_onehot(y_pred)
+
+        #acc_np = accuracy_of_onehot(y_valid,y_np)
+        acc = accuracy_of_onehot(y_valid,y_pred)
+
+        skill = acc - acc_np
 
     t =  dt.datetime.now() - t0
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
-    return ret, y_pred, hx
+    return ret, y_pred, hx    
 
-def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u):
+def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
     t0=dt.datetime.now()
-    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
 
     model = keras.models.Sequential([
-        keras.layers.LSTM(units=u,return_sequences=True,input_shape=[None,1]),
+        keras.layers.LSTM(units=u,return_sequences=True,input_shape=[None,X_valid.shape[2]]),
         keras.layers.LSTM(units=u),
         keras.layers.Dense(o),
     ])
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)
-
     print('lstm eval',model.evaluate(X_valid, y_valid)) 
-    rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
-    skill = rmse_np - rmse
+
+    if fcast!='peak':
+        rmse = np.mean(root_mean_squared_error(y_valid,y_pred)) 
+        skill = rmse_np - rmse
+    if fcast=='peak':
+        y_pred = convert_to_onehot(y_pred)
+
+        #acc_np = accuracy_of_onehot(y_valid,y_np)
+        acc = accuracy_of_onehot(y_valid,y_pred)
+
+        skill = acc - acc_np
 
     t=dt.datetime.now() - t0
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
     return ret, y_pred, hx
 
-def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u):
+def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
+    if fcast=='peak':
+        print('\n\nerror: lstm_s2s() not updated for peak forecast\n\n')
+        quit()
+
     t0=dt.datetime.now()
-    __, rmse_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
 
     model = keras.models.Sequential([
-        keras.layers.LSTM(u, return_sequences=True, input_shape=[None, 1]),
+        keras.layers.LSTM(u, return_sequences=True, input_shape=[None, X_valid.shape[2]]),
         keras.layers.LSTM(u, return_sequences=True),
         keras.layers.TimeDistributed(keras.layers.Dense(o))
     ])
@@ -164,21 +206,39 @@ def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u):
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
-def plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,k):
-    t1, t2 = np.arange(0,n), np.arange(n,n+o) 
+def plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,k):
+    t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs
+    y_valid_pred['np'],  __, __ = naive_persistence(X_valid, y_valid, o)
 
-    y_valid_pred['np'],  __ = naive_persistence(X_valid, y_valid, o)
-    
-    plt.plot(t1, X_valid[k,:,0],                label='X')
-    plt.plot(t2, y_valid_pred['np'][k,:],       label='y^ naive persistence')
-    plt.plot(t2, y_valid_pred['reg'][k,:],      label='y^ regression')
-    plt.plot(t2, y_valid_pred['rnn'][k,:],      label='y^ rnn')
-    plt.plot(t2, y_valid_pred['lstm'][k,:],     label='y^ lstm')
-    plt.plot(t2, y_valid[k,:],                  label='y')
+    if not fcast=='peak':
+        plt.plot(t1, X_valid[k,:,0],              label='X')
 
-    plt.title('validation set')    
+        for model in y_valid_pred:
+            plt.plot(t2, y_valid_pred[model][k,:],   label='y pred %s'%model)
+        #plt.plot(t2, y_valid_pred['np'  ][k,:],   label='y pred naive persist')
+        #plt.plot(t2, y_valid_pred['reg' ][k,:],   label='y pred regression')
+        #plt.plot(t2, y_valid_pred['rnn' ][k,:],   label='y pred rnn')
+        #plt.plot(t2, y_valid_pred['lstm'][k,:],   label='y pred lstm')
+        plt.plot(t2, y_valid[k,:],                label='y true')
+        plt.title('validation set') 
+        
+    if fcast=='peak' and n==24 and o==24:
+        plt.plot(t1, X_valid[k,   :,1],           label='X')
+
+        plt.plot(t2, X_valid[k,   :,1],           label='y pred naive persist')
+        plt.plot(t2, X_valid[k+1, :,1],           label='y true')
+
+        peakh = np.argmax(y_valid[k,:])
+        forecasth_rnn = np.argmax(y_valid_pred['rnn'][k,:])
+        forecasth_lstm = np.argmax(y_valid_pred['lstm'][k,:])
+
+        plt.title('validation set: true peak=h{}, RNN forecast=h{}, LSTM forecast=h{}'.format(peakh,forecasth_rnn,forecasth_lstm))
+
+    plt.ylabel('Load (scaled to max=1)')
+    plt.xlabel('Hour')
     plt.legend()
     plt.show()    
+   
 
 def plot_training(hx):
     #plt.figure(num=None, figsize=(10, 7), dpi=160)
@@ -190,48 +250,66 @@ def plot_training(hx):
     #plt.legend(['Training', 'Validation'], loc='upper right')
     plt.show()   
 
-def print_results(res):
+def print_results(res,X_valid,y_valid,y_valid_nwef,o,fcast):
+    print('')
+    __, __, acc_np = naive_persistence(X_valid,y_valid,o)
+    if fcast=='peak':
+        print('np forecast accuracy {:.3f}'.format(acc_np))
+        print('nwe forecast accuracy {:.3f}'.format(nwe_forecast_accuracy(y_valid, y_valid_nwef)))
+    print('')
     print(pd.DataFrame(data=res).drop(['runtime']).T.to_string())
-
+    print('')
 
 
 
 ################ main execution ################
 
 #
-# setup
+# config
 #     
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+
+fcast = 'peak'
+b = 2521 # batches
+n = 24 # number of timesteps (input)
+h = 0 # horizon of forecast
+o = 24 # output timesteps
+u = 200 # rnn/lstm units
+e = 1000
+s1 = int(.8*b) # split 1 (train-valid)
+s2 = int(.9*b) # split 2 (valid-test)
+
 
 #
 # data
 #
 
-#df = import_data('actual',peaks=True)
-#dv = import_data_lajolla().resample('H').mean().values[:,0]
-dv = import_data('actual',peaks=False).values[:,0] # data vector
+# load
+#vL = import_data_lajolla().resample('H').mean().values[:,0]
+vL = import_data('actual',   fcast)['actual'  ].loc['2007-7-9':'2021-4-27'].values # load vector
+mL = batchify_single_series(vL,b,n+o) # load matrix
+Lmax = np.max(mL) 
+mL = mL / Lmax # scale by max
+d = mL # shape: (batches,timesteps)
 
-b = 2020 # batches
-n = 36 # number of timesteps (input)
-h = 0 # horizon of forecast
-o = 24 # output dimension
-u = 200 # rnn/lstm units
-e = 1000
+# peaks
+if fcast=='peak':
+    vP = import_data('actual',   fcast)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
+    mP = batchify_single_series(vP,b,n+o) # peaks matrix
+    d = np.concatenate((mP,mL),axis=2) # shape: (batches,timesteps,features)
 
-d_fullscale = batchify_single_series(dv,b,n+o)
-dmax = np.max(d_fullscale)
-d = d_fullscale / dmax
+# X and y, split train-test-valid
+X_train, y_train = d[:s1,   :n-h, :], d[:s1,   -o:, 0] # (features, targets)
+X_valid, y_valid = d[s1:s2, :n-h, :], d[s1:s2, -o:, 0]
+X_test,  y_test  = d[s2:,   :n-h, :], d[s2:,   -o:, 0]
 
-s1 = int(.8*b) # split 1 (valid)
-s2 = int(.9*b) # split 2 (test)
+# nwe forecast
+vF = import_data('forecast', fcast)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
+mF = batchify_single_series(vF,b,n+o) # matrix
+X_valid_nwef, y_valid_nwef = mF[s1:s2, :n-h, :], mF[s1:s2, -o:, 0] # (to compare accuracy on same period)
 
-X_train, y_train = d[:s1,   :n-h], d[:s1,   -o:, 0] # features, targets 
-X_valid, y_valid = d[s1:s2, :n-h], d[s1:s2, -o:, 0]
-X_test,  y_test  = d[s2:,   :n-h], d[s2:,   -o:, 0]
-
-print_inputs(X_train,y_train,b,n,h,o,u)
-
+print_inputs(X_train,y_train,b,n,h,o,u,e,fcast)
 
 #
 # models
@@ -239,38 +317,38 @@ print_inputs(X_train,y_train,b,n,h,o,u)
 
 res, y_valid_pred, hx, = {}, {}, {}
 
-res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
+# can't use linear_regression() w/ multiple features
+if fcast != 'peak':
+    res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
-res['rnn'], y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+res['rnn'], y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
-res['lstm'],y_valid_pred['lstm'],hx['lstm'] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+res['lstm'],y_valid_pred['lstm'],hx['lstm'] =    lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
-#res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u)
+#res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u,  fcast)
 
 # units = [100,200,300,400,500,600,700,800,900,1000] 
 # for u in units:
 #     name1 = 'rnn %d'%u
 #     name2 = 'lstm %d'%u
-#     res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
-#     res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+#     res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+#     res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
-# epochs = [25,100,500,1000]
+# epochs = [25,50,100,500,1000]
 # for e in epochs:
 #     name = 'lstm %d'%e
-#     res[name], y_valid_pred[name], hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u)
+#     res[name], y_valid_pred[name], hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 #     plot_training(hx[name])
-
 
 #
 # results
 #
+print_results(res,X_valid,y_valid,y_valid_nwef,o,fcast)
 
-print_results(res)
+plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,k=0)
 
-plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,k=0)
-
-plot_training(hx['rnn'])
-plot_training(hx['lstm'])
+#plot_training(hx['rnn'])
+#plot_training(hx['lstm'])
 
 #
 # outro

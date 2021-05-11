@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # funcs
 # 
 
-def import_data(source, peaks=False):
+def import_data(source, fcast):
     filename = 'Data/ca_' + source + '.csv'
 
     df = pd.read_csv(   filename,   
@@ -45,7 +45,7 @@ def import_data(source, peaks=False):
 
     df = pd.DataFrame(nv,index=dates,columns=[source])                            
 
-    if peaks:
+    if fcast=='peak':
         df['peak'] = np.zeros(df.shape[0],dtype=int)
 
         # one-hot vector denoting peaks 
