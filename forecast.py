@@ -65,20 +65,7 @@ def mean_squared_error(y,y_hat):
 
 def root_mean_squared_error(y,y_hat):
     mse = mean_squared_error(y,y_hat)
-    return np.sqrt(mse)
-
-def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast):
-    print('')
-    print('Forecast',fcast)
-    print('Batches',b)
-    print('Input dimension',n)
-    print('Forecast horizon',h)
-    print('Output dimension',o)
-    print('Units',u)
-    print('Epochs',e)
-    print('X_train shape',X_train.shape)
-    print('y_train shape',y_train.shape)
-    print('')     
+    return np.sqrt(mse)  
 
 def naive_persistence(X_valid,y_valid,o):
     y_pred = X_valid[:,-o:,0]
@@ -248,14 +235,30 @@ def plot_training(hx):
     plt.ylabel('Model Loss (nMSE)')
     plt.xlabel('Epoch')
     #plt.legend(['Training', 'Validation'], loc='upper right')
-    plt.show()   
+    plt.show()  
 
-def print_results(res,X_valid,y_valid,y_valid_nwef,o,fcast):
+def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast):
     print('')
-    __, __, acc_np = naive_persistence(X_valid,y_valid,o)
+    print('Forecast type',fcast)
+    print('Batches',b)
+    print('Input timesteps',n)
+    print('Forecast horizon timesteps',h)
+    print('Output timesteps',o)
+    print('Units (RNN/LSTM)',u)
+    print('Epochs',e)
+    print('X_train shape',X_train.shape)
+    print('y_train shape',y_train.shape)
+    print('')        
+
+def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
+    print('')
+    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o)
     if fcast=='peak':
         print('np forecast accuracy {:.3f}'.format(acc_np))
         print('nwe forecast accuracy {:.3f}'.format(nwe_forecast_accuracy(y_valid, y_valid_nwef)))
+    else:
+        print('INOP: np forecast rmse (kW) {:.1f}'.format(rmse_np))
+        print('INOP: nwe forecast rmse (kW) {:.1f}'.format(np.mean(root_mean_squared_error(y_valid, y_valid_nwef))))
     print('')
     print(pd.DataFrame(data=res).drop(['runtime']).T.to_string())
     print('')
@@ -270,13 +273,13 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,fcast):
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-fcast = 'peak'
+fcast = ''#peak'
 b = 2521 # batches
 n = 24 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 24 # output timesteps
-u = 200 # rnn/lstm units
-e = 1000
+u = 20#0 # rnn/lstm units
+e = 10#00
 s1 = int(.8*b) # split 1 (train-valid)
 s2 = int(.9*b) # split 2 (valid-test)
 
@@ -317,8 +320,7 @@ print_inputs(X_train,y_train,b,n,h,o,u,e,fcast)
 
 res, y_valid_pred, hx, = {}, {}, {}
 
-# can't use linear_regression() w/ multiple features
-if fcast != 'peak':
+if fcast != 'peak': # can't use linear_regression() w/ multiple features
     res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
 res['rnn'], y_valid_pred['rnn'], hx['rnn'] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
@@ -343,7 +345,7 @@ res['lstm'],y_valid_pred['lstm'],hx['lstm'] =    lstm(e, X_valid, y_valid, X_val
 #
 # results
 #
-print_results(res,X_valid,y_valid,y_valid_nwef,o,fcast)
+print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast)
 
 plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,k=0)
 
