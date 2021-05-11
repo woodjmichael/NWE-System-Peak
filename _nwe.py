@@ -11,7 +11,7 @@ import matplotlib.pyplot as plt
 # funcs
 # 
 
-def import_data(source):
+def import_data(source, peaks=False):
     filename = 'Data/ca_' + source + '.csv'
 
     df = pd.read_csv(   filename,   
@@ -43,7 +43,15 @@ def import_data(source):
                             periods=len(vec),
                             freq='H')
 
-    return pd.DataFrame(nv,index=dates,columns=[source])
+    df = pd.DataFrame(nv,index=dates,columns=[source])                            
+
+    if peaks:
+        df['peak'] = np.zeros(df.shape[0],dtype=int)
+
+        # one-hot vector denoting peaks 
+        df.loc[df.groupby(pd.Grouper(freq='D')).idxmax().iloc[:,0], 'peak'] = 1
+
+    return df
 
 def find_monthly_peaks(df,dff):
 

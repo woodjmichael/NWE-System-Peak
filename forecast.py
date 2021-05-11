@@ -9,6 +9,7 @@
 import os, sys
 import pandas as pd
 import numpy as np
+from scipy.stats import moment, skew, kurtosis
 import matplotlib.pyplot as plt
 from tensorflow import keras
 from _nwe import import_data
@@ -169,11 +170,11 @@ def plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,k):
     y_valid_pred['np'],  __ = naive_persistence(X_valid, y_valid, o)
     
     plt.plot(t1, X_valid[k,:,0],                label='X')
-    plt.plot(t2, y_valid[k,:],                  label='y')
     plt.plot(t2, y_valid_pred['np'][k,:],       label='y^ naive persistence')
     plt.plot(t2, y_valid_pred['reg'][k,:],      label='y^ regression')
     plt.plot(t2, y_valid_pred['rnn'][k,:],      label='y^ rnn')
     plt.plot(t2, y_valid_pred['lstm'][k,:],     label='y^ lstm')
+    plt.plot(t2, y_valid[k,:],                  label='y')
 
     plt.title('validation set')    
     plt.legend()
@@ -189,6 +190,11 @@ def plot_training(hx):
     #plt.legend(['Training', 'Validation'], loc='upper right')
     plt.show()   
 
+def print_results(res):
+    print(pd.DataFrame(data=res).drop(['runtime']).T.to_string())
+
+
+
 
 ################ main execution ################
 
@@ -202,16 +208,16 @@ os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 # data
 #
 
-dv = import_data('actual').values[:,0] # data vector
+#df = import_data('actual',peaks=True)
+#dv = import_data_lajolla().resample('H').mean().values[:,0]
+dv = import_data('actual',peaks=False).values[:,0] # data vector
 
-#df = import_data_lajolla()
-
-b = 2525 # batches
-n = 24 # number of timesteps (input)
+b = 2020 # batches
+n = 36 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 24 # output dimension
-u = 50 # rnn/lstm units
-e = 5000
+u = 200 # rnn/lstm units
+e = 1000
 
 d_fullscale = batchify_single_series(dv,b,n+o)
 dmax = np.max(d_fullscale)
@@ -259,12 +265,12 @@ res['lstm'],y_valid_pred['lstm'],hx['lstm'] = lstm(e, X_valid, y_valid, X_valid,
 # results
 #
 
-df = pd.DataFrame(data=res).drop(['runtime']).T
-print(df.to_string())
+print_results(res)
 
-#plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,1)
+plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,k=0)
 
-#plot_training(hx['lstm'])
+plot_training(hx['rnn'])
+plot_training(hx['lstm'])
 
 #
 # outro
