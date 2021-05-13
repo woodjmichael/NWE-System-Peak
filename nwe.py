@@ -1,4 +1,4 @@
-# _nwe.py
+# nwe.py
 # python 3.8.3
 # pandas 1.0.5
 
@@ -12,7 +12,7 @@ import matplotlib.pyplot as plt
 # 
 
 def import_data(source, fcast):
-    filename = 'Data/ca_' + source + '.csv'
+    filename = '../../../Google Drive/Data/NWE/ca_' + source + '.csv'
 
     df = pd.read_csv(   filename,   
                         comment='#',                 

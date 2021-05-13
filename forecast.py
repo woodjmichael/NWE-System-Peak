@@ -10,16 +10,62 @@
 import os, sys
 import pandas as pd
 import numpy as np
+from numpy import isnan
 from scipy.stats import moment, skew, kurtosis
 import matplotlib.pyplot as plt
 from tensorflow import keras
-from nwe import import_data
 import datetime as dt
 from pprint import pprint
 
 #
 # functions
 #
+
+def import_data(source, fcast, IS_COLAB):
+
+    if IS_COLAB:
+        filename = '/content/drive/MyDrive/Data/NWE/ca_' + source + '.csv'
+    else:
+        filename = '../../../Google Drive/Data/NWE/ca_' + source + '.csv'
+
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Date'],
+                        index_col=['Date'])
+
+    vec = []
+    for __, row in df.iterrows():
+        if isnan(row['2nd HR 2']):
+            for h in range(1,25): 
+                if isnan(row['Hr %d'%h]): pass
+                else: vec.append(row['Hr %d'%h])        
+        else:
+            for h in range(1,3):
+                if isnan(row['Hr %d'%h]): pass
+                else: vec.append(row['Hr %d'%h])
+            vec.append(row['2nd HR 2'])
+            for h in range(3,25):
+                if isnan(row['Hr %d'%h]): pass
+                else: vec.append(row['Hr %d'%h])
+            
+    nv =  np.asarray(vec)
+
+    for val in nv: 
+        if np.isnan(val): print('nan!')
+
+    dates = pd.date_range( start=df.index.min(),
+                            periods=len(vec),
+                            freq='H')
+
+    df = pd.DataFrame(nv,index=dates,columns=[source])                            
+
+    if fcast=='peak':
+        df['peak'] = np.zeros(df.shape[0],dtype=int)
+
+        # one-hot vector denoting peaks 
+        df.loc[df.groupby(pd.Grouper(freq='D')).idxmax().iloc[:,0], 'peak'] = 1
+
+    return df
 
 def import_data_lajolla():
     filename = '/Users/mjw/Google Drive/Data/lajolla_load_processed.csv'
@@ -265,23 +311,34 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
 
 
 
+
 ################ main execution ################
 
 #
 # config
 #     
 
-os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 
-fcast = ''#peak'
+os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
+assert sys.version_info >= (3, 5)
+
+IS_COLAB = False
+fcast = 'peak'
 b = 2521 # batches
 n = 24 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 24 # output timesteps
-u = 20#0 # rnn/lstm units
-e = 10#00
+u = 20 #0 # rnn/lstm units
+e = 10 #00
 s1 = int(.8*b) # split 1 (train-valid)
 s2 = int(.9*b) # split 2 (valid-test)
+
+if IS_COLAB:
+    from google.colab import files
+    from google.colab import drive
+    drive.mount('/content/drive')          
+else:
+    assert sys.version_info >= (3, 8)
 
 
 #
@@ -290,7 +347,7 @@ s2 = int(.9*b) # split 2 (valid-test)
 
 # load
 #vL = import_data_lajolla().resample('H').mean().values[:,0]
-vL = import_data('actual',   fcast)['actual'  ].loc['2007-7-9':'2021-4-27'].values # load vector
+vL = import_data('actual', fcast, IS_COLAB)['actual'].loc['2007-7-9':'2021-4-27'].values # load vector
 mL = batchify_single_series(vL,b,n+o) # load matrix
 Lmax = np.max(mL) 
 mL = mL / Lmax # scale by max
@@ -298,7 +355,7 @@ d = mL # shape: (batches,timesteps)
 
 # peaks
 if fcast=='peak':
-    vP = import_data('actual',   fcast)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
+    vP = import_data('actual', fcast, IS_COLAB)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
     mP = batchify_single_series(vP,b,n+o) # peaks matrix
     d = np.concatenate((mP,mL),axis=2) # shape: (batches,timesteps,features)
 
@@ -308,7 +365,7 @@ X_valid, y_valid = d[s1:s2, :n-h, :], d[s1:s2, -o:, 0]
 X_test,  y_test  = d[s2:,   :n-h, :], d[s2:,   -o:, 0]
 
 # nwe forecast
-vF = import_data('forecast', fcast)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
+vF = import_data('forecast', fcast, IS_COLAB)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
 mF = batchify_single_series(vF,b,n+o) # matrix
 X_valid_nwef, y_valid_nwef = mF[s1:s2, :n-h, :], mF[s1:s2, -o:, 0] # (to compare accuracy on same period)
 
@@ -329,18 +386,14 @@ res['lstm'],y_valid_pred['lstm'],hx['lstm'] =    lstm(e, X_valid, y_valid, X_val
 
 #res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u,  fcast)
 
-# units = [100,200,300,400,500,600,700,800,900,1000] 
-# for u in units:
-#     name1 = 'rnn %d'%u
-#     name2 = 'lstm %d'%u
-#     res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-#     res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-
-# epochs = [25,50,100,500,1000]
-# for e in epochs:
-#     name = 'lstm %d'%e
-#     res[name], y_valid_pred[name], hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-#     plot_training(hx[name])
+epochs = [1000,2000,3000,4000,5000]
+units = [100,200,300,400,500,600,700,800,900,1000] 
+for u in units:
+  for e in epochs:
+      name1 = 'rnn %d'%u
+      name2 = 'lstm %d'%u
+      res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+      res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
 #
 # results
