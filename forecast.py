@@ -9,7 +9,6 @@
 #                                                                                                #
 ###############################################################################################"""
 
-
 import os, sys, platform
 import pandas as pd
 import numpy as np
@@ -21,8 +20,8 @@ import tensorflow as tf
 from tensorflow import keras
 import datetime as dt
 from pprint import pprint
-import seaborn as sns
-
+#import seaborn as sns
+#import emd
 
 
 """###############################################################################################
@@ -34,17 +33,17 @@ import seaborn as sns
 ###############################################################################################"""
 
 
-def config(plots,seed):
+def config(plot_theme,seed):
     global IS_COLAB
 
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     assert sys.version_info >= (3, 5)
 
-    if plots=='dark':
+    if plot_theme=='dark':
         plt.style.use('dark_background')
-    elif plots=='light':                
+    elif plot_theme=='light':                
         plt.rcParams['axes.prop_cycle']
-        sns.set_style("whitegrid")
+        #sns.set_style("whitegrid")
     pd.set_option('precision', 2)
 
     np.random.seed(seed)
@@ -54,16 +53,40 @@ def config(plots,seed):
         IS_COLAB = False
     else: # probably colab
         IS_COLAB = True
+
         from google.colab import files
         from google.colab import drive
-        drive.mount('/content/drive')       
+        drive.mount('/content/drive')
+        
+        # gpu_info = !nvidia-smi
+        # gpu_info = '\n'.join(gpu_info)
+        # if gpu_info.find('failed') >= 0:
+        #   print('No GPU found')
+        # else:
+        #   print(gpu_info)
 
-def import_data(source, fcast, IS_COLAB):
+        # from psutil import virtual_memory
+        # ram_gb = virtual_memory().total / 1e9
+        # print('Your runtime has {:.1f} gigabytes of available RAM\n'.format(ram_gb))
 
+def import_data(site,fcast,IS_COLAB,feature):
     if IS_COLAB:
-        filename = '/content/drive/MyDrive/Data/NWE/ca_' + source + '.csv'
+        path = '/content/drive/MyDrive/Data/'
     else:
-        filename = '../../../Google Drive/Data/NWE/ca_' + source + '.csv'
+        path = '../../../Google Drive/Data/'
+
+    if site == 'lajolla':
+        d = import_data_lajolla(path)[feature].values
+    elif site == 'hyatt':
+        d = import_data_hyatt(path)[feature].loc[:'2019-10-5'].values # integer number of days
+    elif (site == 'nwe'):     
+        d = import_data_nwe('actual', fcast, path)['actual'].loc['2007-7-9':'2021-4-27'].values # align dates with forecast
+
+    return d # numpy data vector               
+
+def import_data_nwe(source, fcast, path):
+
+    filename = path + 'NWE/ca_' + source + '.csv'
 
     df = pd.read_csv(   filename,   
                         comment='#',                 
@@ -104,18 +127,25 @@ def import_data(source, fcast, IS_COLAB):
 
     return df
 
-def import_data_lajolla():
-    filename = '../../../Google Drive/Data/lajolla_load_processed.csv'
-
-    fields = ['Datetime (UTC-8)','Load (kW)']
+def import_data_lajolla(path):
+    filename = path + 'lajolla_load_IMFs.csv'
 
     df = pd.read_csv(   filename,   
                         comment='#',                 
                         parse_dates=['Datetime (UTC-8)'],
-                        index_col=['Datetime (UTC-8)'],
-                        usecols=fields)   
+                        index_col=['Datetime (UTC-8)'])
 
     return df
+
+def import_data_hyatt(path):
+    filename = path + 'hyatt_load_IMFs.csv'
+
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Datetime (UTC-10)'],
+                        index_col=['Datetime (UTC-10)']) 
+
+    return df    
 
 def generate_time_series(b, n): # batch size, n_steps
     f1, f2, o1, o2 = np.random.rand(4, b, 1)
@@ -140,8 +170,6 @@ def batchify_single_series(sv,b,no):
 
 def mean_squared_error(y,y_hat):
     global Lmax
-    y = y * Lmax
-    y_hat = y_hat * Lmax
     e = y - y_hat
     e2 = e * e
     return np.mean(e2)
@@ -154,7 +182,7 @@ def naive_persistence(X,y,o):
     y_pred = X[:,-o:,0]
     rmse = np.mean(root_mean_squared_error(y,y_pred)) * Lmax
     acc  = accuracy_of_onehot(y,y_pred)
-    return y_pred, rmse, acc    
+    return y_pred, rmse, acc         
 
 def convert_to_onehot(y):
     y2 = np.zeros((y.shape[0],y.shape[1]),dtype=int)
@@ -205,7 +233,7 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)    
-    print('rnn eval',model.evaluate(X_valid, y_valid)) 
+    print('rnn u{} e{} eval {:.6f}'.format(u,e,model.evaluate(X_valid, y_valid, verbose=0)))
 
     if fcast!='peak':
         rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax
@@ -234,7 +262,7 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)
-    print('lstm eval',model.evaluate(X_valid, y_valid)) 
+    print('lstm u{} e{} eval {:.6f}'.format(u,e,model.evaluate(X_valid, y_valid, verbose=0)))
 
     if fcast!='peak':
         rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax 
@@ -277,51 +305,55 @@ def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
-def plot_predictions(X,y,y_pred,n,h,o,fcast,k,title):
+def plot_predictions(X,y,y_pred,n,h,o,fcast,batch,title):
     t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs
     y_pred['np'],  __, __ = naive_persistence(X, y, o)
+    plt.figure(num=None, figsize=(10, 7), dpi=80)
+
+    print('X0 mean',np.mean(X[0,:,0]))
+    print('y0 mean',np.mean(y[0,:]))
 
     if not fcast=='peak':
-        plt.plot(t1, X[k,:,0],              label='X')
+        plt.plot(t1, X[batch,:,0],              label='X')
+        plt.plot(t2, y[batch,:],                label='y true') 
 
         for model in y_pred:
-            plt.plot(t2, y_pred[model][k,:],   label='y pred %s'%model)
-            rmse = sk_mse(y[k,:],y_pred[model][k,:],squared=False)*Lmax
-            title = title + ' ' + model + ' ' + '%.2f'%rmse
-        #plt.plot(t2, y_valid_pred['np'  ][k,:],   label='y pred naive persist')
-        #plt.plot(t2, y_valid_pred['reg' ][k,:],   label='y pred regression')
-        #plt.plot(t2, y_valid_pred['rnn' ][k,:],   label='y pred rnn')
-        #plt.plot(t2, y_valid_pred['lstm'][k,:],   label='y pred lstm')
-        plt.plot(t2, y[k,:],                label='y true') 
-        plt.title(title) 
+            rmse_batch = root_mean_squared_error(y[batch,:],y_pred[model][batch,:])*Lmax
+            plt.plot(t2, y_pred[model][batch,:],   label='y predict {} (rmse {:.2f} kW)'.format(model,rmse_batch))          
+            
+        plt.title(title + ': batch ' + str(batch) + ' inputs \'X\', targets and outputs \'y\'') 
         
     if fcast=='peak' and n==24 and o==24:
-        plt.plot(t1, X[k,   :,1],           label='X')
+        plt.plot(t1, X[batch,   :,1],           label='X')
 
-        plt.plot(t2, X[k,   :,1],           label='y pred naive persist')
-        plt.plot(t2, X[k+1, :,1],           label='y true')
+        plt.plot(t2, X[batch,   :,1],           label='y predict naive persistence')
+        plt.plot(t2, X[batch+1, :,1],           label='y true')
 
-        peakh = np.argmax(y[k,:])
-        forecasth_rnn = np.argmax(y_pred['rnn'][k,:])
-        forecasth_lstm = np.argmax(y_pred['lstm'][k,:])
+        peakh = np.argmax(y[batch,:])
+        forecasth_rnn = np.argmax(y_pred['rnn'][batch,:])
+        forecasth_lstm = np.argmax(y_pred['lstm'][batch,:])
 
         plt.title(title + ' true peak=h{}, RNN forecast=h{}, LSTM forecast=h{}'.format(peakh,forecasth_rnn,forecasth_lstm))
 
     plt.ylabel('Load (scaled to max=1)')
-    plt.xlabel('Hour')
+    plt.xlabel('Timestep')
     plt.legend()
     plt.show()    
    
 
 def plot_training(hx,first_epoch):
-    #plt.figure(num=None, figsize=(10, 7), dpi=160)
-    plt.plot(hx.history['loss'][first_epoch:]) 
-    #plt.plot(hx.history['val_loss'])
-    plt.title('Training (epochs {}+)'.format(first_epoch))
-    plt.ylabel('Model Loss (nMSE)')
-    plt.xlabel('Epoch after {}'.format(first_epoch))
-    #plt.legend(['Training', 'Validation'], loc='upper right')
-    plt.show()  
+    for model in hx:
+        if model == 'reg':
+            pass
+        else:
+            plt.figure(num=None, figsize=(10, 7), dpi=80)
+            plt.plot(hx[model].history['loss'][first_epoch:]) 
+            #plt.plot(hx.history['val_loss'])
+            plt.title('{} training'.format(model))
+            plt.ylabel('model loss (nMSE)')
+            plt.xlabel('epoch after {}'.format(first_epoch))
+            #plt.legend(['Training', 'Validation'], loc='upper right')
+            plt.show()  
 
 def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site):
     print('')
@@ -331,8 +363,8 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site):
     print('Input timesteps',n)
     print('Forecast horizon timesteps',h)
     print('Output timesteps',o)
-    print('Units (RNN/LSTM)',u)
-    print('Epochs',e)
+    print('Units (RNN/LSTM)',units)
+    print('Epochs',epochs)
     print('X_train shape',X_train.shape)
     print('y_train shape',y_train.shape)
     print('')        
@@ -340,16 +372,24 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site):
 def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
     print('')
     __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o)
-    if fcast=='peak':
-        print('np forecast accuracy {:.3f}'.format(acc_np))  
-        #print('nwe forecast accuracy {:.3f}'.format(nwe_forecast_accuracy(y_valid, y_valid_nwef)))      
-    else:
-        print('np forecast rmse (kW) {:.1f}'.format(rmse_np))
-        #print('INOP: nwe forecast rmse (kW) {:.1f}'.format(np.mean(root_mean_squared_error(y_valid, y_valid_nwef))))
+
+    # show np
+    if fcast=='peak': print('np forecast accuracy {:.3f}'.format(acc_np))  
+    else: print('np forecast rmse (kW) {:.1f}'.format(rmse_np))
     print('')
     #print(pd.DataFrame(data=res).drop(['runtime']).T.to_string())
     print(pd.DataFrame(data=res).T.to_string())
     print('')
+
+# def emd_sift_and_plot(df,data_col):
+#     #imf = emd.sift.sift(df['load'].values)
+#     imf = emd.sift.sift(df[data_col].values)
+
+#     for i in range(imf.shape[1]):
+#         #df_emd.insert(i+2,'IMF%s'%(i+1), imf[:,i])
+#         df['IMF%s'%(i+1)] = imf[:,i]    
+
+#     return df
 
 """###############################################################################################
 ##################################################################################################
@@ -368,17 +408,17 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
 #                                                                                                #
 ###############################################################################################"""
 
-config(plots='dark',seed=42) 
+config(plot_theme='light',seed=42) 
 
-site = 'lajolla'     
-fcast = 'hourly'#peak
-b = 377 # batches
+site = 'hyatt'     
+fcast = 'normal' # normal, peak, emd
+b = 528 # batches (lajolla 2 day = 377, hyatt 2 day = 528)
 n = 96 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 96 # output timesteps
-u = 100 # rnn/lstm units
-e = 1000 # epochs
-s1, s2 = int(.8*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
+units = [10] 
+epochs = [100]
+s1, s2 = int(.63*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 
 
 
@@ -391,17 +431,21 @@ s1, s2 = int(.8*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 ###############################################################################################"""
 
 # load
-vL = import_data_lajolla().values[:,0]
-#vL = import_data_lajolla().resample('H').mean().values[:,0]
-#vL = import_data('actual', fcast, IS_COLAB)['actual'].loc['2007-7-9':'2021-4-27'].values # load vector
+vL = import_data(site,fcast,IS_COLAB,feature='Load (kW)') # load vector
 mL = batchify_single_series(vL,b,n+o) # load matrix
 Lmax = np.max(mL) 
 mL = mL / Lmax # scale by max
 d = mL # shape: (batches,timesteps)
 
+if fcast == 'emd':
+    vIMF3 = import_data(site,fcast,IS_COLAB,feature='IMF3') # load vector
+    mIMF3 = batchify_single_series(vIMF3,b,n+o) # peaks matrix
+    mIMF3 = mIMF3/np.max(mIMF3) # scale by max
+    d = np.concatenate((mL,mIMF3),axis=2) # shape: (batches,timesteps,features)
+
 # peaks
 if fcast=='peak':
-    vP = import_data('actual', fcast, IS_COLAB)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
+    vP = import_data_nwe('actual', fcast, IS_COLAB)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
     mP = batchify_single_series(vP,b,n+o) # peaks matrix
     d = np.concatenate((mP,mL),axis=2) # shape: (batches,timesteps,features)
 
@@ -413,11 +457,11 @@ X_test,  y_test  = d[s2:,   :n-h, :], d[s2:,   -o:, 0]
 y_pred, rmse, acc = naive_persistence(X_valid, y_valid, o)
 
 # nwe forecast
-# vF = import_data('forecast', fcast, IS_COLAB)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
+# vF = import_data_nwe('forecast', fcast, IS_COLAB)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
 # mF = batchify_single_series(vF,b,n+o) # matrix
 # X_valid_nwef, y_valid_nwef = mF[s1:s2, :n-h, :], mF[s1:s2, -o:, 0] # (to compare accuracy on same period)
 
-print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site)
+print_inputs(X_train,y_train,b,n,h,o,units,epochs,fcast,site)
 
 """###############################################################################################
 #                                                                                                #
@@ -430,27 +474,25 @@ print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site)
 res, y_valid_pred, hx, = {}, {}, {}
 
 # linear regression
-if fcast != 'peak': # can't use linear_regression() w/ multiple features
+if fcast == 'normal': # can't use linear_regression() w/ multiple features (peaks, emd)
     res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
 # simple rnn
-res['rnn'], y_valid_pred['rnn'], hx['rnn']  = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+#res['rnn'], y_valid_pred['rnn'], hx['rnn']  = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
 # lstm
-res['lstm'],y_valid_pred['lstm'],hx['lstm'] =     lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+#res['lstm'],y_valid_pred['lstm'],hx['lstm'] =     lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
 # lstm s2s
 #res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u,  fcast)
 
-# grid search 
-    # epochs = [1000,2000,3000,4000,5000]
-    # units = [100,200,300,400,500,600,700,800,900,1000] 
-    # for u in units:
-    #   for e in epochs:
-    #       name1 = 'rnn %d'%u
-    #       name2 = 'lstm %d'%u
-    #       res[name1], y_valid_pred[name1], hx[name1] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-    #       res[name2],y_valid_pred[name2],hx[name2] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+for u in units:
+    for e in epochs:
+        #name = 'rnn u{} e{}'.format(u,e)        
+        #res[name], y_valid_pred[name], hx[name] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+
+        name = 'lstm u{} e{}'.format(u,e)
+        res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
 
 
@@ -464,19 +506,18 @@ res['lstm'],y_valid_pred['lstm'],hx['lstm'] =     lstm(e, X_valid, y_valid, X_va
 
 print_results(res,X_valid,y_valid,y_valid,o,Lmax,fcast)
 
-plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,k=0,title='validation set')
+plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,batch=0,title='validation set')
 
-plot_training(hx['rnn'],  first_epoch=25)
-plot_training(hx['lstm'], first_epoch=25)
+#plot_predictions(X_test,y_test,y_valid_pred,n,h,o,fcast,batch=0,title='test set')
 
+plot_training(hx, first_epoch=25)    
 
-
-"""###############################################################################################
-#                                                                                                #
-#                                                                                                #
-#                                           outro                                                #
-#                                                                                                #
-#                                                                                                #
-###############################################################################################"""
-
-sys.stdout.write('\a') # beep  
+# a = X_train[0,:96,0]*Lmax
+# b = y_train[0,:]*Lmax
+# e2 = (a-b)*(a-b)
+# rmse = np.sqrt(np.mean(e2))
+# print('mean(a)',np.mean(a))
+# print('mean(b)',np.mean(b))
+# print('a[0]',a[0])
+# print('b[0]',b[0])
+# print('rmse',root_mean_squared_error(a,b))
