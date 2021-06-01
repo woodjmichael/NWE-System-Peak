@@ -2,10 +2,11 @@
 #                                                                                                #
 #   forecast.py                                                                                  #
 #                                                                                                #
-#   python     3.8.3                                                                             #
-#   pandas     1.0.5                                                                             #                    
-#   tensorflow 2.3.1                                                                             #
-#   keras      2.4.0                                                                             #
+#   keras      2.3.1                                                                             #
+#   numpy      1.19.2                                                                            #
+#   pandas     1.1.3                                                                             #
+#   python     3.7.9                                                                             #
+#   tensorflow 2.0.0                                                                             #
 #                                                                                                #
 ###############################################################################################"""
 
@@ -34,7 +35,6 @@ from pprint import pprint
 
 
 def config(plot_theme,seed):
-    global IS_COLAB
 
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
     assert sys.version_info >= (3, 5)
@@ -68,6 +68,8 @@ def config(plot_theme,seed):
         # from psutil import virtual_memory
         # ram_gb = virtual_memory().total / 1e9
         # print('Your runtime has {:.1f} gigabytes of available RAM\n'.format(ram_gb))
+
+    return IS_COLAB        
 
 def import_data(site,fcast,IS_COLAB,feature):
     if IS_COLAB:
@@ -178,7 +180,7 @@ def root_mean_squared_error(y,y_hat):
     mse = mean_squared_error(y,y_hat)
     return np.sqrt(mse)  
 
-def naive_persistence(X,y,o):
+def naive_persistence(X,y,o,Lmax):
     y_pred = X[:,-o:,0]
     rmse = np.mean(root_mean_squared_error(y,y_pred)) * Lmax
     acc  = accuracy_of_onehot(y,y_pred)
@@ -217,7 +219,7 @@ def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
     skill = (rmse_np - rmse)/rmse_np
 
     t = dt.datetime.now() - t0
-    ret = {'epochs':e,'units':0,'skill_np':skill,'runtime':t}
+    ret = {'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
 def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
@@ -247,12 +249,12 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
         skill = acc - acc_np
 
     t =  dt.datetime.now() - t0
-    ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
+    ret = {'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
-def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
+def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
     t0=dt.datetime.now()
-    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o,Lmax)
 
     model = keras.models.Sequential([
         keras.layers.LSTM(units=u,return_sequences=True,input_shape=[None,X_valid.shape[2]]),
@@ -276,7 +278,7 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
         skill = acc - acc_np
 
     t=dt.datetime.now() - t0
-    ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
+    ret = {'skill_np':skill,'runtime':t}
     return ret, y_pred, hx
 
 def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
@@ -305,13 +307,10 @@ def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
-def plot_predictions(X,y,y_pred,n,h,o,fcast,batch,title):
+def plot_predictions(X,y,y_pred,n,h,o,fcast,Lmax,batch,title):
     t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs
-    y_pred['np'],  __, __ = naive_persistence(X, y, o)
+    y_pred['np'],  __, __ = naive_persistence(X, y, o,Lmax)
     plt.figure(num=None, figsize=(10, 7), dpi=80)
-
-    print('X0 mean',np.mean(X[0,:,0]))
-    print('y0 mean',np.mean(y[0,:]))
 
     if not fcast=='peak':
         plt.plot(t1, X[batch,:,0],              label='X')
@@ -355,10 +354,11 @@ def plot_training(hx,first_epoch):
             #plt.legend(['Training', 'Validation'], loc='upper right')
             plt.show()  
 
-def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site):
+def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('')
     print('Site',site)
     print('Forecast type',fcast)
+    print('Additional Features',feats)
     print('Batches',b)
     print('Input timesteps',n)
     print('Forecast horizon timesteps',h)
@@ -371,7 +371,7 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site):
 
 def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
     print('')
-    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o)
+    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o,Lmax)
 
     # show np
     if fcast=='peak': print('np forecast accuracy {:.3f}'.format(acc_np))  
@@ -407,17 +407,17 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
 #                                                                                                #
 #                                                                                                #
 ###############################################################################################"""
+IS_COLAB = config(plot_theme='light',seed=42) 
 
-config(plot_theme='light',seed=42) 
-
-site = 'hyatt'     
-fcast = 'normal' # normal, peak, emd
-b = 528 # batches (lajolla 2 day = 377, hyatt 2 day = 528)
+site = 'lajolla'     
+fcast = 'normal' # normal, peak
+feats = 'IMF3' # '', or 'IMFx'
+b = 377 # batches (nwe = , lajolla 2 day = 377, hyatt 2 day = 528)
 n = 96 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 96 # output timesteps
-units = [10] 
-epochs = [100]
+units = [25] 
+epochs = [1000]
 s1, s2 = int(.63*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 
 
@@ -437,8 +437,8 @@ Lmax = np.max(mL)
 mL = mL / Lmax # scale by max
 d = mL # shape: (batches,timesteps)
 
-if fcast == 'emd':
-    vIMF3 = import_data(site,fcast,IS_COLAB,feature='IMF3') # load vector
+if feats != '':
+    vIMF3 = import_data(site,fcast,IS_COLAB,feature=feats) # load vector
     mIMF3 = batchify_single_series(vIMF3,b,n+o) # peaks matrix
     mIMF3 = mIMF3/np.max(mIMF3) # scale by max
     d = np.concatenate((mL,mIMF3),axis=2) # shape: (batches,timesteps,features)
@@ -454,14 +454,14 @@ X_train, y_train = d[:s1,   :n-h, :], d[:s1,   -o:, 0] # (features, targets)
 X_valid, y_valid = d[s1:s2, :n-h, :], d[s1:s2, -o:, 0]
 X_test,  y_test  = d[s2:,   :n-h, :], d[s2:,   -o:, 0]
 
-y_pred, rmse, acc = naive_persistence(X_valid, y_valid, o)
+y_pred, rmse, acc = naive_persistence(X_valid, y_valid, o, Lmax)
 
 # nwe forecast
 # vF = import_data_nwe('forecast', fcast, IS_COLAB)['forecast'].loc['2007-7-9':'2021-4-27'].values # vector
 # mF = batchify_single_series(vF,b,n+o) # matrix
 # X_valid_nwef, y_valid_nwef = mF[s1:s2, :n-h, :], mF[s1:s2, -o:, 0] # (to compare accuracy on same period)
 
-print_inputs(X_train,y_train,b,n,h,o,units,epochs,fcast,site)
+print_inputs(X_train,y_train,b,n,h,o,units,epochs,fcast,site,feats)
 
 """###############################################################################################
 #                                                                                                #
@@ -474,8 +474,8 @@ print_inputs(X_train,y_train,b,n,h,o,units,epochs,fcast,site)
 res, y_valid_pred, hx, = {}, {}, {}
 
 # linear regression
-if fcast == 'normal': # can't use linear_regression() w/ multiple features (peaks, emd)
-    res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
+#if fcast == 'normal': # can't use linear_regression() w/ multiple features (peaks, emd)
+#    res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
 
 # simple rnn
 #res['rnn'], y_valid_pred['rnn'], hx['rnn']  = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
@@ -492,7 +492,7 @@ for u in units:
         #res[name], y_valid_pred[name], hx[name] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
 
         name = 'lstm u{} e{}'.format(u,e)
-        res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+        res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast,Lmax)
 
 
 
@@ -506,7 +506,7 @@ for u in units:
 
 print_results(res,X_valid,y_valid,y_valid,o,Lmax,fcast)
 
-plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,batch=0,title='validation set')
+plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,Lmax,batch=0,title='validation set')
 
 #plot_predictions(X_test,y_test,y_valid_pred,n,h,o,fcast,batch=0,title='test set')
 
