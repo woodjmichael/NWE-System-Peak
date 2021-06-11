@@ -79,6 +79,10 @@ def import_data(site,fcast,IS_COLAB,feature):
 
     if site == 'lajolla':
         d = import_data_lajolla(path)[feature].values
+    elif site == 'lajolla_zerovals':
+        d = import_data_lajolla_zerovals(path)[feature].values
+    elif site == 'northside':
+        d = import_data_northside(path)[feature].loc[:'2021-04-29'].values        
     elif site == 'hyatt':
         d = import_data_hyatt(path)[feature].loc[:'2019-10-5'].values # integer number of days
     elif (site == 'nwe'):     
@@ -139,6 +143,16 @@ def import_data_lajolla(path):
 
     return df
 
+def import_data_lajolla_zerovals(path):
+    filename = path + 'lajolla_load_IMFs_zerovals.csv'
+
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Datetime (UTC-8)'],
+                        index_col=['Datetime (UTC-8)'])
+
+    return df    
+
 def import_data_hyatt(path):
     filename = path + 'hyatt_load_IMFs.csv'
 
@@ -147,7 +161,17 @@ def import_data_hyatt(path):
                         parse_dates=['Datetime (UTC-10)'],
                         index_col=['Datetime (UTC-10)']) 
 
-    return df    
+    return df 
+
+def import_data_northside(path):
+    filename = path + 'northside_load.csv'
+
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Datetime MT'],
+                        index_col=['Datetime MT']) 
+
+    return df        
 
 def generate_time_series(b, n): # batch size, n_steps
     f1, f2, o1, o2 = np.random.rand(4, b, 1)
@@ -166,9 +190,14 @@ def generate_single_time_series(b, n): # batch size, n_steps
 
     return s.reshape(b*n,1)[:,0] # 1d
 
-def batchify_single_series(sv,b,no):
+def batchify_single_series(sv,b,no): #no = input + output size
     s = sv.reshape(b,no)
     return s[..., np.newaxis].astype(np.float32)
+
+def batchify_single_series_sliding_window(sv,b,n,o): #no = input + output size
+    X = sv.reshape(b,n)
+    Y = sv.reshape(b,)
+    return s[..., np.newaxis].astype(np.float32)    
 
 def mean_squared_error(y,y_hat):
     global Lmax
@@ -363,8 +392,8 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('Input timesteps',n)
     print('Forecast horizon timesteps',h)
     print('Output timesteps',o)
-    print('Units (RNN/LSTM)',units)
-    print('Epochs',epochs)
+    print('Units (RNN/LSTM)',u)
+    print('Epochs',e)
     print('X_train shape',X_train.shape)
     print('y_train shape',y_train.shape)
     print('')        
@@ -411,13 +440,13 @@ IS_COLAB = config(plot_theme='light',seed=42)
 
 site = 'lajolla'     
 fcast = 'normal' # normal, peak
-feats = 'IMF3' # '', or 'IMFx'
+feats = '' # '', or 'IMFx'
 b = 377 # batches (nwe = , lajolla 2 day = 377, hyatt 2 day = 528)
 n = 96 # number of timesteps (input)
 h = 0 # horizon of forecast
 o = 96 # output timesteps
-units = [25] 
-epochs = [1000]
+units = [20] 
+epochs = [200]
 s1, s2 = int(.63*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 
 
@@ -475,24 +504,15 @@ res, y_valid_pred, hx, = {}, {}, {}
 
 # linear regression
 #if fcast == 'normal': # can't use linear_regression() w/ multiple features (peaks, emd)
-#    res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_valid, y_valid, X_valid, y_valid, n, h, o)
-
-# simple rnn
-#res['rnn'], y_valid_pred['rnn'], hx['rnn']  = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-
-# lstm
-#res['lstm'],y_valid_pred['lstm'],hx['lstm'] =     lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
-
-# lstm s2s
-#res['lstm_s2s'],y_valid_pred['lstm_s2s'],hx['lstm_s2s'] = lstm_s2s(e, X_valid, y_valid, Y_valid, X_valid, y_valid, Y_valid, n, h, o, u,  fcast)
+#    res['reg'], y_valid_pred['reg'], hx['reg'] = linear_regression(1000, X_train, y_train, X_valid, y_valid, n, h, o)
 
 for u in units:
     for e in epochs:
         #name = 'rnn u{} e{}'.format(u,e)        
-        #res[name], y_valid_pred[name], hx[name] = deep_rnn(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast)
+        #res[name], y_valid_pred[name], hx[name] = deep_rnn(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast)
 
         name = 'lstm u{} e{}'.format(u,e)
-        res[name],y_valid_pred[name],hx[name] = lstm(e, X_valid, y_valid, X_valid, y_valid, n, h, o, u, fcast,Lmax)
+        res[name],y_valid_pred[name],hx[name] = lstm(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast,Lmax)
 
 
 
@@ -508,16 +528,7 @@ print_results(res,X_valid,y_valid,y_valid,o,Lmax,fcast)
 
 plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,Lmax,batch=0,title='validation set')
 
-#plot_predictions(X_test,y_test,y_valid_pred,n,h,o,fcast,batch=0,title='test set')
+#for b in range(10):
+#    plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,Lmax,batch=b,title='validation set')
 
 plot_training(hx, first_epoch=25)    
-
-# a = X_train[0,:96,0]*Lmax
-# b = y_train[0,:]*Lmax
-# e2 = (a-b)*(a-b)
-# rmse = np.sqrt(np.mean(e2))
-# print('mean(a)',np.mean(a))
-# print('mean(b)',np.mean(b))
-# print('a[0]',a[0])
-# print('b[0]',b[0])
-# print('rmse',root_mean_squared_error(a,b))
