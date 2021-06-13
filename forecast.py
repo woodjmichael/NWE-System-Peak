@@ -71,7 +71,7 @@ def config(plot_theme,seed):
 
     return IS_COLAB        
 
-def import_data(site,fcast,IS_COLAB,feature):
+def get_data(site,fcast,IS_COLAB,feature,onehot=False):
     if IS_COLAB:
         path = '/content/drive/MyDrive/Data/'
     else:
@@ -87,21 +87,23 @@ def import_data(site,fcast,IS_COLAB,feature):
         d = import_data_hyatt(path)[feature].loc[:'2019-10-5'].values # integer number of days
     elif (site == 'nwe'):     
         d = import_data_nwe('actual', fcast, path)['actual'].loc['2007-7-9':'2021-4-27'].values # align dates with forecast
+        if onehot:
+            d = import_data_nwe('actual', fcast, path)['peak'].loc['2007-7-9':'2021-4-27'].values # align dates with forecast
 
-    return d # numpy data vector               
+    return d # numpy data vector                     
 
 def import_data_nwe(source, fcast, path):
-
+    # import raw data from OATI OASIS
     filename = path + 'NWE/ca_' + source + '.csv'
-
     df = pd.read_csv(   filename,   
                         comment='#',                 
                         parse_dates=['Date'],
                         index_col=['Date'])
 
+    # convert matrix of local-time values to vector of standard time values
     vec = []
     for __, row in df.iterrows():
-        if isnan(row['2nd HR 2']):
+        if isnan(row['2nd HR 2']): 
             for h in range(1,25): 
                 if isnan(row['Hr %d'%h]): pass
                 else: vec.append(row['Hr %d'%h])        
@@ -114,17 +116,18 @@ def import_data_nwe(source, fcast, path):
                 if isnan(row['Hr %d'%h]): pass
                 else: vec.append(row['Hr %d'%h])
             
-    nv =  np.asarray(vec)
+    nv =  np.asarray(vec)  # list to np array
 
     for val in nv: 
-        if np.isnan(val): print('nan!')
+        if np.isnan(val): print('nan!') # check again for nan's
 
+    # stuff into data frame (could be nice to have datetiem index)
     dates = pd.date_range( start=df.index.min(),
                             periods=len(vec),
                             freq='H')
-
     df = pd.DataFrame(nv,index=dates,columns=[source])                            
 
+    # make one-hot vector if its a peak forecast
     if fcast=='peak':
         df['peak'] = np.zeros(df.shape[0],dtype=int)
 
@@ -246,12 +249,13 @@ def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
 
     rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax
     skill = (rmse_np - rmse)/rmse_np
+    ret = {'skill_np':skill}
 
     t = dt.datetime.now() - t0
-    ret = {'skill_np':skill,'runtime':t}
-    return ret, y_pred, hx    
+    ret['minutes'] = t.total_seconds()/60
+    return ret, y_pred, hx   
 
-def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
+def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
     t0=dt.datetime.now()
 
     __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
@@ -267,18 +271,17 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast):
     print('rnn u{} e{} eval {:.6f}'.format(u,e,model.evaluate(X_valid, y_valid, verbose=0)))
 
     if fcast!='peak':
-        rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax
+        rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax 
         skill = (rmse_np - rmse)/rmse_np
+        ret = {'skill_np':skill}
     if fcast=='peak':
         y_pred = convert_to_onehot(y_pred)
-
-        #acc_np = accuracy_of_onehot(y_valid,y_np)
         acc = accuracy_of_onehot(y_valid,y_pred)
+        dacc = acc - acc_np
+        ret = {'∆acc':dacc}
 
-        skill = acc - acc_np
-
-    t =  dt.datetime.now() - t0
-    ret = {'skill_np':skill,'runtime':t}
+    t = dt.datetime.now() - t0
+    ret['minutes'] = t.total_seconds()/60
     return ret, y_pred, hx    
 
 def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
@@ -293,21 +296,21 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
     model.compile(loss='mse',optimizer='Adam')
     hx = model.fit(X_train,y_train,epochs=e,verbose=0)
     y_pred = model.predict(X_valid)
-    print('lstm u{} e{} eval {:.6f}'.format(u,e,model.evaluate(X_valid, y_valid, verbose=0)))
 
     if fcast!='peak':
         rmse = np.mean(root_mean_squared_error(y_valid,y_pred))*Lmax 
         skill = (rmse_np - rmse)/rmse_np
+        ret = {'skill_np':skill}
     if fcast=='peak':
         y_pred = convert_to_onehot(y_pred)
-
-        #acc_np = accuracy_of_onehot(y_valid,y_np)
         acc = accuracy_of_onehot(y_valid,y_pred)
+        dacc = acc - acc_np
+        ret = {'∆acc':dacc}
 
-        skill = acc - acc_np
-
-    t=dt.datetime.now() - t0
-    ret = {'skill_np':skill,'runtime':t}
+    t = dt.datetime.now() - t0
+    ret['minutes'] = t.total_seconds()/60
+    
+    print('lstm u{} e{}'.format(u,e),ret)
     return ret, y_pred, hx
 
 def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
@@ -336,7 +339,7 @@ def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
     ret = {'epochs':e,'units':u,'skill_np':skill,'runtime':t}
     return ret, y_pred, hx    
 
-def plot_predictions(X,y,y_pred,n,h,o,fcast,Lmax,batch,title):
+def plot_predictions(X,y,y_valid_data,y_pred,n,h,o,fcast,Lmax,batch,title):
     t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs
     y_pred['np'],  __, __ = naive_persistence(X, y, o,Lmax)
     plt.figure(num=None, figsize=(10, 7), dpi=80)
@@ -355,13 +358,15 @@ def plot_predictions(X,y,y_pred,n,h,o,fcast,Lmax,batch,title):
         plt.plot(t1, X[batch,   :,1],           label='X')
 
         plt.plot(t2, X[batch,   :,1],           label='y predict naive persistence')
-        plt.plot(t2, X[batch+1, :,1],           label='y true')
+        plt.plot(t2, y_valid_data[batch, :],    label='y true')
 
-        peakh = np.argmax(y[batch,:])
-        forecasth_rnn = np.argmax(y_pred['rnn'][batch,:])
-        forecasth_lstm = np.argmax(y_pred['lstm'][batch,:])
+        y_peak = np.argmax(y[batch,:])
+        title += ': true peak = h{}'.format(y_peak)
+        for model in y_pred:
+            predh = np.argmax(y_pred[model][batch,:])
+            title += ', {} = h{}'.format(model,predh)
 
-        plt.title(title + ' true peak=h{}, RNN forecast=h{}, LSTM forecast=h{}'.format(peakh,forecasth_rnn,forecasth_lstm))
+        plt.title(title)
 
     plt.ylabel('Load (scaled to max=1)')
     plt.xlabel('Timestep')
@@ -398,7 +403,7 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('y_train shape',y_train.shape)
     print('')        
 
-def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
+def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast,np_only=False):
     print('')
     __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o,Lmax)
 
@@ -407,26 +412,8 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
     else: print('np forecast rmse (kW) {:.1f}'.format(rmse_np))
     print('')
     #print(pd.DataFrame(data=res).drop(['runtime']).T.to_string())
-    print(pd.DataFrame(data=res).T.to_string())
+    if not np_only: print(pd.DataFrame(data=res).T.to_string())
     print('')
-
-# def emd_sift_and_plot(df,data_col):
-#     #imf = emd.sift.sift(df['load'].values)
-#     imf = emd.sift.sift(df[data_col].values)
-
-#     for i in range(imf.shape[1]):
-#         #df_emd.insert(i+2,'IMF%s'%(i+1), imf[:,i])
-#         df['IMF%s'%(i+1)] = imf[:,i]    
-
-#     return df
-
-"""###############################################################################################
-##################################################################################################
-##################################################################################################
-####################################### main execution ###########################################
-##################################################################################################
-##################################################################################################
-###############################################################################################"""
 
 
 """###############################################################################################
@@ -436,17 +423,19 @@ def print_results(res,X_valid,y_valid,y_valid_nwef,o,Lmax,fcast):
 #                                                                                                #
 #                                                                                                #
 ###############################################################################################"""
+#import platform 
+#if platform.system() == 'Darwin': from forecast import *
 IS_COLAB = config(plot_theme='light',seed=42) 
 
-site = 'lajolla'     
-fcast = 'normal' # normal, peak
+site = 'nwe' # lajolla, hyatt, nwe   
+fcast = 'peak' # normal, peak
 feats = '' # '', or 'IMFx'
-b = 377 # batches (nwe = , lajolla 2 day = 377, hyatt 2 day = 528)
-n = 96 # number of timesteps (input)
+b = 2521 # batches (nwe 2 day =  2521, lajolla 2 day = 377, hyatt 2 day = 528)
+n = 24 # number of timesteps (input)
 h = 0 # horizon of forecast
-o = 96 # output timesteps
-units = [20] 
-epochs = [200]
+o = 24 # output timesteps
+units = [5] 
+epochs = [50]
 s1, s2 = int(.63*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 
 
@@ -460,28 +449,30 @@ s1, s2 = int(.63*b), int(.9*b) # split 1 (train-valid), 2 (valid-test)
 ###############################################################################################"""
 
 # load
-vL = import_data(site,fcast,IS_COLAB,feature='Load (kW)') # load vector
+vL = get_data(site,fcast,IS_COLAB,feature='Load (kW)') # load vector
 mL = batchify_single_series(vL,b,n+o) # load matrix
 Lmax = np.max(mL) 
 mL = mL / Lmax # scale by max
 d = mL # shape: (batches,timesteps)
 
 if feats != '':
-    vIMF3 = import_data(site,fcast,IS_COLAB,feature=feats) # load vector
+    vIMF3 = get_data(site,fcast,IS_COLAB,feature=feats) # load vector
     mIMF3 = batchify_single_series(vIMF3,b,n+o) # peaks matrix
     mIMF3 = mIMF3/np.max(mIMF3) # scale by max
     d = np.concatenate((mL,mIMF3),axis=2) # shape: (batches,timesteps,features)
 
 # peaks
 if fcast=='peak':
-    vP = import_data_nwe('actual', fcast, IS_COLAB)['peak'    ].loc['2007-7-9':'2021-4-27'].values # peak one-hot vector
+    vP = get_data(site,fcast,IS_COLAB,feature=feats,onehot=True)
     mP = batchify_single_series(vP,b,n+o) # peaks matrix
     d = np.concatenate((mP,mL),axis=2) # shape: (batches,timesteps,features)
+    
 
 # X and y, split train-test-valid
 X_train, y_train = d[:s1,   :n-h, :], d[:s1,   -o:, 0] # (features, targets)
 X_valid, y_valid = d[s1:s2, :n-h, :], d[s1:s2, -o:, 0]
 X_test,  y_test  = d[s2:,   :n-h, :], d[s2:,   -o:, 0]
+y_valid_data = d[s1:s2, -o:, -1]
 
 y_pred, rmse, acc = naive_persistence(X_valid, y_valid, o, Lmax)
 
@@ -508,11 +499,11 @@ res, y_valid_pred, hx, = {}, {}, {}
 
 for u in units:
     for e in epochs:
-        #name = 'rnn u{} e{}'.format(u,e)        
-        #res[name], y_valid_pred[name], hx[name] = deep_rnn(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast)
+        #m = 'rnn u{} e{}'.format(u,e) # model name        
+        #res[m], y_valid_pred[m], hx[m] = deep_rnn(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast)
 
-        name = 'lstm u{} e{}'.format(u,e)
-        res[name],y_valid_pred[name],hx[name] = lstm(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast,Lmax)
+        m = 'lstm u{} e{}'.format(u,e) # model name
+        res[m],y_valid_pred[m],hx[m] = lstm(e, X_train, y_train, X_valid, y_valid, n, h, o, u, fcast,Lmax)        
 
 
 
@@ -524,9 +515,9 @@ for u in units:
 #                                                                                                #
 ###############################################################################################"""
 
-print_results(res,X_valid,y_valid,y_valid,o,Lmax,fcast)
+print_results(res,X_valid,y_valid,y_valid,o,Lmax,fcast,np_only=True)
 
-plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,Lmax,batch=0,title='validation set')
+plot_predictions(X_valid,y_valid,y_valid_data,y_valid_pred,n,h,o,fcast,Lmax,batch=0,title='validation set')
 
 #for b in range(10):
 #    plot_predictions(X_valid,y_valid,y_valid_pred,n,h,o,fcast,Lmax,batch=b,title='validation set')
