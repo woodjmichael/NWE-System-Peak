@@ -21,6 +21,7 @@ import tensorflow as tf
 from tensorflow import keras
 import datetime as dt
 from pprint import pprint
+from copy import deepcopy
 #import seaborn as sns
 #import emd
 
@@ -71,20 +72,26 @@ def config(plot_theme,seed):
 
     return IS_COLAB        
 
-def get_data(site,IS_COLAB,feature,onehot_peak=False):
+def get_data(site,IS_COLAB,additional_features,onehot_peak=False):
+    features = deepcopy(additional_features)
+
     if IS_COLAB:
         path = '/content/drive/MyDrive/Data/'
     else:
         path = '../../../Google Drive/Data/'
 
     if site == 'lajolla':
-        df = import_data_lajolla(path)
+        features.append('Load (kW)')
+        df = import_data_lajolla(path)[features]
     elif site == 'lajolla_zerovals':
-        df = import_data_lajolla_zerovals(path)
+        features.append('Load (kW)')
+        df = import_data_lajolla_zerovals(path)[features]
     elif site == 'northside':
-        df = import_data_northside(path)
+        features.append('Load (kW)')
+        df = import_data_northside(path)[features]
     elif site == 'hyatt':
-        df = import_data_hyatt(path)
+        features.append('Load (kW)')
+        df = import_data_hyatt(path)[features]
     elif site == 'nwe':     
         df = import_data_nwe(path, 'actual')
 
@@ -203,7 +210,13 @@ def batchify_single_series(sv,b,no): #no = input + output size
 def batchify_single_series_sliding_window(sv,b,n,o): #no = input + output size
     X = sv.reshape(b,n)
     Y = sv.reshape(b,)
-    return s[..., np.newaxis].astype(np.float32)    
+    return s[..., np.newaxis].astype(np.float32)         
+
+def convert_to_onehot(y):
+    y2 = np.zeros((y.shape[0],y.shape[1]),dtype=int)
+    for i in range(y.shape[0]):
+        y2[i,np.argmax(y[i,:])] = 1
+    return y2    
 
 def mean_squared_error(y,y_hat):
     e = y - y_hat
@@ -212,22 +225,10 @@ def mean_squared_error(y,y_hat):
 
 def root_mean_squared_error(y,y_hat):
     mse = mean_squared_error(y,y_hat)
-    return np.sqrt(mse)  
-
-def naive_persistence(X,y,o,Lmax):
-    y_pred = X[:,-o:,0]
-    rmse = np.mean(root_mean_squared_error(y,y_pred)) * Lmax
-    acc  = accuracy_of_onehot(y,y_pred)
-    return y_pred, rmse, acc         
-
-def convert_to_onehot(y):
-    y2 = np.zeros((y.shape[0],y.shape[1]),dtype=int)
-    for i in range(y.shape[0]):
-        y2[i,np.argmax(y[i,:])] = 1
-    return y2
+    return np.sqrt(mse)    
 
 def accuracy_of_onehot(y_true,y_pred):
-    # vectors must be one hots
+    # matrices must be one hots
     n_correct = []
     n_batches = y_true.shape[0]
     for i in range(n_batches):
@@ -237,7 +238,8 @@ def accuracy_of_onehot(y_true,y_pred):
 
 def accuracy_of_onehot_vector(y_true,y_pred):
     # vectors must be one hots
-    return sum(y_true*y_pred)/sum(y_true) # returns a value 0 to 1    
+    n_batches = y_true.shape[0]
+    return np.sum(y_true*y_pred) / n_batches
 
 def accuracy_of_NON_onehot_wrt_peaks(y_true,y_pred):
     # matrix must NOT be one hots
@@ -252,6 +254,23 @@ def accuracy_of_NON_onehot_wrt_peaks(y_true,y_pred):
 def nwe_forecast_accuracy(y_true, y_pred):
     y_pred = convert_to_onehot(y_pred)
     return accuracy_of_onehot(y_true, y_pred)
+
+def daily_accuracy_on_rmse_basis(y_true,y_pred1,y_pred2):
+    # matrices must NOT be one hots
+    n_correct = []
+    n_batches = y_true.shape[0]
+    for i in range(n_batches):
+        rmse1 = root_mean_squared_error(y_true[i,:],y_pred1[i,:])
+        rmse2 = root_mean_squared_error(y_true[i,:],y_pred2[i,:])
+        is_better = rmse1 > rmse2
+        n_correct.append(is_better)    
+    return sum(n_correct)/n_batches # return a value 0 to 1    
+
+def naive_persistence(X,y,o,Lmax):
+    y_pred = X[:,-o:,0]
+    rmse = np.mean(root_mean_squared_error(y,y_pred)) * Lmax
+    acc  = accuracy_of_onehot(y,y_pred)
+    return y_pred, rmse, acc        
 
 def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
     t0 = dt.datetime.now()

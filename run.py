@@ -9,8 +9,8 @@ from forecast import *
 IS_COLAB = config(plot_theme='light',seed=42) 
 
 site = 'nwe' # lajolla, hyatt, nwe   
-forecast_type = '' # peak or ''/
-additional_features = '' # IMFx or ''
+forecast_type = 'peak' # peak or ''
+additional_features = [] # IMFx or []
 b = 2521 # batches: nwe 2 day =  2521, lajolla 2 day = 377, hyatt 2 day = 528
 n = 24 # number of timesteps (input)
 h = 0 # horizon of forecast
@@ -35,8 +35,7 @@ mL = batchify_single_series(vL,b,n+o) # load matrix
 Lmax = np.max(mL) 
 mL = mL / Lmax # scale by max
 d = mL # shape: (batches,timesteps)
-
-if additional_features != '':
+if len(additional_features) > 0:
     vIMF3 = get_data(site,IS_COLAB,additional_features) # load vector
     mIMF3 = batchify_single_series(vIMF3,b,n+o) # peaks matrix
     mIMF3 = mIMF3/np.max(mIMF3) # scale by max
@@ -72,7 +71,8 @@ res, y_valid_pred, hx, = {}, {}, {}
 y_valid_pred['np'] = naive_persistence(X_valid, y_valid, o, Lmax)[0]
 
 # nwe inhouse/internal forecast
-res['NWE in-house'], y_valid_pred['NWE in-house'] = nwe_inhouse_forecast(X_valid, y_valid, b, n, o, s1, s2, Lmax, forecast_type, IS_COLAB)
+if site == 'nwe':
+    res['in-house'], y_valid_pred['in-house'] = nwe_inhouse_forecast(X_valid, y_valid, b, n, o, s1, s2, Lmax, forecast_type, IS_COLAB)
 
 # linear regression
 #if fcast == 'normal': # can't use linear_regression() w/ multiple features (peaks, emd)
@@ -98,9 +98,9 @@ for u in units:
 
 print_results(res, X_valid, y_valid, o, Lmax, forecast_type, np_only=False)
 
-#plot_predictions(X_valid, y_valid, y_valid_data, y_valid_pred, n, h, o, forecast_type, Lmax, batch=0, title='validation set')
+plot_predictions(X_valid, y_valid, y_valid_data, y_valid_pred, n, h, o, forecast_type, Lmax, batch=0, title='validation set')
 
-for b in range(10):
-    plot_predictions(X_valid, y_valid, y_valid_data, y_valid_pred, n, h, o, forecast_type, Lmax, batch=b, title='validation set')
+#for b in range(10):
+#    plot_predictions(X_valid, y_valid, y_valid_data, y_valid_pred, n, h, o, forecast_type, Lmax, batch=b, title='validation set')
 
 plot_training(hx, first_epoch=25)    
