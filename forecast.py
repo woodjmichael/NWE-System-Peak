@@ -207,10 +207,13 @@ def batchify_single_series(sv,b,no): #no = input + output size
     s = sv.reshape(b,no)
     return s[..., np.newaxis].astype(np.float32)
 
-def batchify_single_series_sliding_window(sv,b,n,o): #no = input + output size
-    X = sv.reshape(b,n)
-    Y = sv.reshape(b,)
-    return s[..., np.newaxis].astype(np.float32)         
+def batchify_single_series_sliding_window(sv,n,o): # n = input size, o = output size
+    df = pd.DataFrame(sv, columns=['t'])
+    for i in range(1,n+o):
+        df['t+%d'%i] = df['t'].shift(-i)
+    df = df.dropna()
+    d = df.values
+    return d[...,np.newaxis]
 
 def convert_to_onehot(y):
     y2 = np.zeros((y.shape[0],y.shape[1]),dtype=int)
@@ -266,15 +269,18 @@ def daily_accuracy_on_rmse_basis(y_true,y_pred1,y_pred2):
         n_correct.append(is_better)    
     return sum(n_correct)/n_batches # return a value 0 to 1    
 
-def naive_persistence(X,y,o,Lmax):
-    y_pred = X[:,-o:,0]
+def naive_persistence(X,y,o,l,Lmax): # l = lag, o = output dim
+    n = X.shape[1]
+    begin = n - l
+    end = begin + o
+    y_pred = X[:,begin:end,0]
     rmse = np.mean(root_mean_squared_error(y,y_pred)) * Lmax
     acc  = accuracy_of_onehot(y,y_pred)
     return y_pred, rmse, acc        
 
-def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
+def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o,l,Lmax):
     t0 = dt.datetime.now()
-    __, rmse_np, __ = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, __ = naive_persistence(X_valid, y_valid, o, l, Lmax)
 
     model = keras.models.Sequential([
         keras.layers.Flatten(input_shape=[n-h,1]),
@@ -292,10 +298,10 @@ def linear_regression(e,X_train,y_train,X_valid,y_valid,n,h,o):
     ret['minutes'] = t.total_seconds()/60
     return ret, y_pred, hx   
 
-def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
+def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,l,fcast,Lmax):
     t0=dt.datetime.now()
 
-    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o,l,Lmax)
 
     model = keras.models.Sequential([
         keras.layers.SimpleRNN(units=u,return_sequences=True,input_shape=[None,X_valid.shape[2]]),
@@ -321,9 +327,9 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
     ret['minutes'] = t.total_seconds()/60
     return ret, y_pred, hx    
 
-def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
+def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,l,fcast,Lmax):
     t0=dt.datetime.now()
-    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o, Lmax)
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o, l, Lmax)
 
     model = keras.models.Sequential([
         keras.layers.LSTM(units=u,return_sequences=True,input_shape=[None,X_valid.shape[2]]),
@@ -350,13 +356,13 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,fcast,Lmax):
     print('lstm u{} e{}'.format(u,e),ret)
     return ret, y_pred, hx
 
-def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
+def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,l, fcast, Lmax):
     if fcast=='peak':
         print('\n\nerror: lstm_s2s() not updated for peak forecast\n\n')
         quit()
 
     t0=dt.datetime.now()
-    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o)
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o, l, Lmax)
 
     model = keras.models.Sequential([
         keras.layers.LSTM(u, return_sequences=True, input_shape=[None, X_valid.shape[2]]),
@@ -377,8 +383,8 @@ def lstm_s2s(e,X_train,y_train,Y_train,X_valid,y_valid,Y_valid,n,h,o,u,fcast):
     return ret, y_pred, hx    
 
 
-def nwe_inhouse_forecast(X_valid,y_valid,b,n,o,s1,s2,Lmax,fcast,IS_COLAB):
-    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o, Lmax)
+def nwe_inhouse_forecast(X_valid,y_valid,b,n,o,l,s1,s2,Lmax,fcast,IS_COLAB):
+    __, rmse_np, acc_np = naive_persistence(X_valid, y_valid, o, l, Lmax)
 
     if IS_COLAB:
       path = '/content/drive/MyDrive/Data/'
@@ -413,17 +419,19 @@ def plot_predictions(X,y,y_valid_data,y_pred,n,h,o,fcast,Lmax,batch,title):
     t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs    
     plt.figure(num=None, figsize=(10, 7), dpi=80)
 
-    if not fcast=='peak':
-        plt.plot(t1, X[batch,:,0]*Lmax,              label='X')
-        plt.plot(t2, y[batch,:]*Lmax,                label='y true') 
-
+    if o == 1:
+        t = np.arange(24) # 24 points per day
         for model in y_pred:
-            rmse_batch = root_mean_squared_error(y[batch,:],y_pred[model][batch,:])*Lmax
-            plt.plot(t2, y_pred[model][batch,:]*Lmax,   label='y predict {} (rmse {:.2f} kW)'.format(model,rmse_batch))          
-            
-        plt.title(title + ': batch ' + str(batch) + ' inputs \'X\', targets and outputs \'y\'') 
-        
-    if fcast=='peak' and n==24 and o==24:
+            begin = batch * 24 # 24 points per day
+            end   = (batch+1) * 24 # 24 points per day 
+            rmse_batch = root_mean_squared_error(
+                                                    y[begin:end],
+                                                    y_pred[model][begin:end] )*Lmax
+            plt.plot(   t,y[begin:end] * Lmax,
+                        t,y_pred[model][begin:end] * Lmax,
+                        label='y predict {} (rmse {:.2f})'.format(model,rmse_batch)) 
+
+    elif fcast=='peak' and n==24 and o==24:
         plt.plot(t1, X[batch,   :,1]*Lmax,           label='X')
 
         plt.plot(t2, X[batch,   :,1]*Lmax,           label='y predict naive persistence')
@@ -433,11 +441,26 @@ def plot_predictions(X,y,y_valid_data,y_pred,n,h,o,fcast,Lmax,batch,title):
         title += ': true peak = h{}'.format(y_peak)
         for model in y_pred:
             predh = np.argmax(y_pred[model][batch,:]*Lmax)
-            title += ', {} = h{}'.format(model,predh)
+            title += ', {} = h{}'.format(model,predh)                        
+
+    elif fcast=='':
+        plt.plot(t1, X[batch,:,0]*Lmax,              label='X')
+        plt.plot(t2, y[batch,:]*Lmax,                label='y true') 
+
+        for model in y_pred:
+            rmse_batch = root_mean_squared_error(y[batch,:],y_pred[model][batch,:])*Lmax
+            plt.plot(t2, y_pred[model][batch,:]*Lmax,   label='y predict {} (rmse {:.2f})'.format(model,rmse_batch))          
+            
+        plt.title(title + ': batch ' + str(batch) + ' inputs \'X\', targets and outputs \'y\'') 
+        
+
 
         plt.title(title)
 
-    plt.ylabel('Load (scaled to max=1)')
+    
+
+
+    plt.ylabel('Load (kW)')
     plt.xlabel('Timestep')
     plt.legend()
     plt.show()    
@@ -455,7 +478,25 @@ def plot_training(hx,first_epoch):
             plt.ylabel('model loss (nMSE)')
             plt.xlabel('epoch after {}'.format(first_epoch))
             #plt.legend(['Training', 'Validation'], loc='upper right')
-            plt.show()  
+            plt.show() 
+
+def plot_every_day(df,dppd=24,alpha=0.4):
+    delta = dppd # data points per day
+    t_begin = 0
+    t_end = dppd
+
+    d = df.values.flatten()
+    L = df.shape[0]
+    n = int(L/delta) - 1 # keeps from getting too close to the end
+    t = np.arange(0,24,24/dppd,dtype=float)
+
+    plt.figure(num=None, figsize=(10,7),dpi=80)
+    plt.plot(t,d,alpha=alpha)
+    plt.xlim([0,24])
+    plt.xlabel('Hour of Day')
+    plt.ylabel('Load (kW)')
+    plt.xticks(np.arange(0, 25, 1))
+    plt.show()             
 
 def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('')
@@ -464,7 +505,7 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('Additional Features:',feats)
     print('Batches:',b)
     print('Input timesteps:',n)
-    print('Forecast horizon timesteps:',h)
+    print('Forecast horizon timesteps (h+1):',h+1)
     print('Output timesteps:',o)
     print('Units (RNN/LSTM):',u)
     print('Epochs:',e)
@@ -472,9 +513,9 @@ def print_inputs(X_train,y_train,b,n,h,o,u,e,fcast,site,feats):
     print('y_train shape:',y_train.shape)
     print('')        
 
-def print_results(res,X_valid,y_valid,o,Lmax,fcast,np_only=False):
+def print_results(res,X_valid,y_valid,o,l,Lmax,fcast,np_only=False):
     print('')
-    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o,Lmax)
+    __, rmse_np, acc_np = naive_persistence(X_valid,y_valid,o,l,Lmax)
 
     # show np
     if fcast=='peak': print('np forecast accuracy {:.3f}'.format(acc_np))  
