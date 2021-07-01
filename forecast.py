@@ -11,6 +11,7 @@
 ###############################################################################################"""
 
 import os, sys, platform
+from numpy.core.numeric import NaN
 import pandas as pd
 import numpy as np
 from numpy import isnan
@@ -419,7 +420,7 @@ def plot_predictions(X,y,y_valid_data,y_pred,n,h,o,fcast,Lmax,batch,title):
     t1, t2 = np.arange(0,n), np.arange(n,n+o) # t1 inputs, t2 outputs    
     plt.figure(num=None, figsize=(10, 7), dpi=80)
 
-    if o == 1:
+    if o == 1: # single point forecast, likely sliding
         t = np.arange(24) # 24 points per day
         for model in y_pred:
             begin = batch * 24 # 24 points per day
@@ -480,19 +481,18 @@ def plot_training(hx,first_epoch):
             #plt.legend(['Training', 'Validation'], loc='upper right')
             plt.show() 
 
-def plot_every_day(df,dppd=24,alpha=0.4):
-    delta = dppd # data points per day
-    t_begin = 0
-    t_end = dppd
+def plot_every_day(df,day_of_week=-1,dppd=24,alpha=0.04):
+    if day_of_week >= 0:
+        df = df[df.index.weekday == day_of_week]
 
-    d = df.values.flatten()
-    L = df.shape[0]
-    n = int(L/delta) - 1 # keeps from getting too close to the end
+    num_days = int(df.shape[0]/dppd)
+    d = df.values.reshape(num_days,dppd).T
     t = np.arange(0,24,24/dppd,dtype=float)
 
     plt.figure(num=None, figsize=(10,7),dpi=80)
     plt.plot(t,d,alpha=alpha)
     plt.xlim([0,24])
+    plt.ylim([0,2000])
     plt.xlabel('Hour of Day')
     plt.ylabel('Load (kW)')
     plt.xticks(np.arange(0, 25, 1))

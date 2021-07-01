@@ -7,6 +7,7 @@
 ###############################################################################################"""
 from forecast import *
 
+
 IS_COLAB = config(plot_theme='light',seed=42) 
 site = 'nwe' # lajolla, hyatt, nwe   
 forecast_type = '' # peak or ''
