@@ -16,7 +16,7 @@ import pandas as pd
 import numpy as np
 from numpy import isnan
 from scipy.stats import moment, skew, kurtosis
-from sklearn.metrics import mean_squared_error as sk_mse
+#from sklearn.metrics import mean_squared_error as sk_mse
 import matplotlib.pyplot as plt
 import tensorflow as tf
 from tensorflow import keras
@@ -79,7 +79,7 @@ def get_data(site,IS_COLAB,additional_features,onehot_peak=False):
     if IS_COLAB:
         path = '/content/drive/MyDrive/Data/'
     else:
-        path = '../../../Google Drive/Data/'
+        path = '~/Google Drive/My Drive/Data/'
 
     if site == 'lajolla':
         features.append('Load (kW)')
@@ -95,6 +95,7 @@ def get_data(site,IS_COLAB,additional_features,onehot_peak=False):
         df = import_data_hyatt(path)[features]
     elif site == 'nwe':     
         df = import_data_nwe(path, 'actual')
+        df['T'] = import_temp_nwe(path)['T']
 
 
     if onehot_peak: # make one-hot vector of the peak time period
@@ -106,17 +107,14 @@ def get_data(site,IS_COLAB,additional_features,onehot_peak=False):
         df = df[['peak']]
              
 
-    return df.values.flatten() # numpy data vector                     
+    return df # numpy data vector                     
 
 def import_data_nwe(path,feature):
     # feature = actual | forecast
 
     # import raw data from OATI OASIS
     filename = path + 'NWE/ca_'+feature+'.csv'
-    df = pd.read_csv(   filename,   
-                        comment='#',                 
-                        parse_dates=['Date'],
-                        index_col=['Date'])
+    df = pd.read_csv( filename, comment='#', parse_dates=['Date'], index_col=['Date'])                        
 
     # convert matrix of local-time values to vector of standard time values
     vec = []
@@ -146,6 +144,31 @@ def import_data_nwe(path,feature):
     df = pd.DataFrame(nv,index=dates,columns=[feature])                            
 
     return df.loc['2007-7-9':'2021-4-27'] # these dates for consistency
+
+def import_temp_nwe(path):
+    filename = path + 'NWE/temp_mt-helena.csv'
+    df = pd.read_csv(   filename,   
+                        comment='#',                 
+                        parse_dates=['Date'],
+                        index_col=['Date'])                            
+    df['T'] = pd.to_numeric(df['HourlyDryBulbTemperature degF'], errors='coerce')
+    df = df[['T']]
+    df = df.fillna(method='ffill')
+    df = df.sort_index()
+    df = df.resample('60T').mean()
+    df = df.fillna(method='ffill')
+    df = df['2015':]
+
+    print('')
+    print('length',len(df))
+    print('dtype',df['T'].dtype)
+    print('begin', df.index[0])
+    print('end',df.index[-1])
+    print('max dt',df.index.to_series().diff().max())
+    print('min dt',df.index.to_series().diff().min())
+    print('')
+    return df                        
+
 
 def import_data_lajolla(path):
     filename = path + 'lajolla_load_IMFs.csv'
@@ -322,7 +345,7 @@ def deep_rnn(e,X_train,y_train,X_valid,y_valid,n,h,o,u,l,fcast,Lmax):
         y_pred = convert_to_onehot(y_pred)
         acc = accuracy_of_onehot(y_valid,y_pred)
         dacc = acc - acc_np
-        ret = {'∆acc':dacc}
+        ret = {'diff acc':dacc}
 
     t = dt.datetime.now() - t0
     ret['minutes'] = t.total_seconds()/60
@@ -349,7 +372,7 @@ def lstm(e,X_train,y_train,X_valid,y_valid,n,h,o,u,l,fcast,Lmax):
         y_pred = convert_to_onehot(y_pred)
         acc = accuracy_of_onehot(y_valid,y_pred)
         dacc = acc - acc_np
-        ret = {'∆acc':dacc}
+        ret = {'diff acc':dacc}
 
     t = dt.datetime.now() - t0
     ret['minutes'] = t.total_seconds()/60
@@ -391,6 +414,7 @@ def nwe_inhouse_forecast(X_valid,y_valid,b,n,o,l,s1,s2,Lmax,fcast,IS_COLAB):
       path = '/content/drive/MyDrive/Data/'
     else:
       path = '../../../Google Drive/Data/'
+      
 
     vF = import_data_nwe(path, 'forecast').values.flatten()
     if fcast == 'peak':
@@ -412,7 +436,7 @@ def nwe_inhouse_forecast(X_valid,y_valid,b,n,o,l,s1,s2,Lmax,fcast,IS_COLAB):
         y_pred = convert_to_onehot(y_pred)
         acc = accuracy_of_onehot(y_valid,y_pred)
         dacc = acc - acc_np
-        ret = {'∆acc':dacc}
+        ret = {'diff acc':dacc}
 
     return ret, y_pred        
 
