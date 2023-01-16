@@ -3,6 +3,8 @@
 
 Data
 sandbox.py
+models/
+logs/
 
 ### macOS ###
 # General

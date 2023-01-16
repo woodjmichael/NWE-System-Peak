@@ -1,5 +1,7 @@
 import os, sys
 
+from datetime import datetime
+
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 from pprint import pprint
@@ -20,6 +22,9 @@ from tensorflow.keras.callbacks import  EarlyStopping, ModelCheckpoint, TensorBo
 from tensorflow.keras.backend import square, mean
 
 import emd #install using pip
+
+# pd.options.plotting.backend = "plotly"
+# pd.set_option('precision', 2)
 
 def config(plot_theme,seed,precision):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -701,7 +706,6 @@ def train_gru(  num_x_signals, num_y_signals, path_checkpoint,
                 callback_tensorboard,
                 callback_reduce_lr]
 
-  #%%time
   model.fit(  x=generator,
               epochs=20,
               steps_per_epoch=100,
@@ -996,23 +1000,25 @@ def lstm_build_train_v2(num_x_signals, num_y_signals, path_checkpoint,
 
 def lstm_build_train( num_x_signals, num_y_signals, path_checkpoint, 
                       generator, validation_data, units, epochs, 
-                      layers=1, patience=5, verbose=1,dropout=0.):
+                      layers=1, patience=5, verbose=1,dropout=0.,
+                      afuncs={'lstm':'relu','dense':'sigmoid'},
+                      loss='mse',metrics=['accuracy']):
   
   model = Sequential()
   model.add( LSTM(  units,
                     return_sequences=True,
                     input_shape=(None, num_x_signals,),
-                    activation='relu'))
+                    activation=afuncs['lstm']))
   model.add(Dropout(dropout))
   if layers == 2:
     model.add( LSTM(  units,
                       return_sequences=True,
-                      activation='relu') )
+                      activation=afuncs['lstm']) )
     model.add(Dropout(dropout))  
     
-  model.add( Dense( num_y_signals, activation='relu') )  
+  model.add( Dense( num_y_signals, activation=afuncs['dense']) )  
 
-  model.compile(loss='binary_crossentropy', optimizer='adam',metrics=['accuracy'])
+  model.compile(loss=loss, optimizer='adam',metrics=metrics)
   model.summary()                  
   
   callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
@@ -1337,6 +1343,132 @@ def plot_training_history(hx):
   plt.ylabel('MSE (scaled data) [kW/kW]')
   plt.xlabel('Training Epoch')
   plt.title('Training History')
-  
+
+
+def accuracy_one_hot(true,pred):
+    """ Measure the accuracy of two one hot vectors, inputs can be 1d numpy or dataseries"""
+    n_misses = sum(true != pred)/2     # every miss gives two 'False' entries
+    return 1 - n_misses/sum(true)   # basis is the number of one-hots
+
+def one_hot_of_peaks(ds,freq='D'):
+    df = pd.DataFrame(ds)
+    df['peak'] = 0
+    df.loc[df.groupby(pd.Grouper(freq=freq)).idxmax().iloc[:,0], 'peak'] = 1  
+    return df['peak']   
+
+def run_the_joules_peak(
+        site='prpa',
+        units=24,
+        layers=1,
+        sequence_length=24,
+        epochs=100,
+        dropout=0,
+        patience=10,
+        verbose=0,
+        output = True,
+        plots = False,
+        filename = 'data/PRPA_load_cleaned_mjw.csv',
+        shift_steps = 1,
+        dir = 'models',
+        features = [  'Load (kW)',
+                    'Day',
+                    'Weekday',
+                    'Hour',
+                    'IMF1',                                
+                    'IMF2',                                
+                    'IMF3',
+                    'IMF4',
+                    'IMF5',
+                    'IMF6',
+                    'IMF7',
+                    'IMF8',],
+        targets = ['TargetsOH'],
+        train_split = 0.9,
+        afuncs={'lstm':'relu','dense':'relu','gru':'relu'},
+        loss='binary_crossentropy',
+        metrics=['accuracy'],
+        data_start=None,
+        data_end=None):
+    
+    results = {}
+
+    t = datetime.now()
+    path_checkpoint = f'{dir}/{site}/{t.year}-{t.month:02}-{t.day:02}_'+\
+                    f'{t.hour:02}-{t.minute:02}-{t.second:02}_lstm_{units}x{layers}x{shift_steps}.keras'
+
+    df,dppd,np_days = get_dat_v4(site,filename,emd=True,rename=True,start=data_start,end=data_end)                    
+
+    df['LoadOH'] =      one_hot_of_peaks(df[['Load (kW)']])
+    df['TargetsOH'] =   one_hot_of_peaks(df[['Load (kW)']]).shift(-shift_steps)
+    df['PredNPOH'] =    one_hot_of_peaks(df[['Load (kW)']]).shift(np_days*dppd-shift_steps)
+    df = df.dropna()
+    
+    # split
+    num_data = len(df)
+    num_train = int(train_split * num_data)
+    df_train = df.iloc[:num_train,:]
+    df_valid = df.iloc[num_train:,:]
+
+    feature_scaler = MinMaxScaler()
+    X_train = feature_scaler.fit_transform(df_train[features].values)
+    X_valid = feature_scaler.fit_transform(df_valid[features].values)
+
+    y_train = df_train.TargetsOH.values[:,np.newaxis]
+    y_valid = df_valid.TargetsOH.values[:,np.newaxis]
+    
+    generator = batch_generator( batch_size=32,
+                                    sequence_length=sequence_length,
+                                    num_x_signals=len(features),
+                                    num_y_signals=len(targets),
+                                    num_train=num_train,
+                                    x_train_scaled=X_train,
+                                    y_train_scaled=y_train)   
+    
+    X_batch, y_batch = next(generator)
+    
+    X_valid = X_valid[np.newaxis,:,:]
+    y_valid = y_valid[np.newaxis,:,:] 
+
+    model = Sequential()
+    model.add( GRU(  units=units,
+                    return_sequences=True,
+                    input_shape=(None, len(features),),
+                    activation=afuncs['gru']))
+    model.add(Dense(len(targets), activation=afuncs['dense']))
+
+    model.compile(loss=loss, optimizer='adam',metrics=metrics)
+    model.summary()                  
+
+    callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
+                                            monitor='val_loss',
+                                            verbose=verbose,
+                                            save_weights_only=True,
+                                            save_best_only=True)
+
+    callback_early_stopping = EarlyStopping(  monitor='val_loss',
+                                            patience=patience,
+                                            verbose=verbose)
+
+    callbacks = [ callback_early_stopping,
+                callback_checkpoint,]
+
+    hx = model.fit(  x=generator,
+                epochs=epochs,
+                steps_per_epoch=100,
+                validation_data=(X_valid,y_valid),
+                callbacks=callbacks)        
+    
+    model.load_weights(path_checkpoint)
+    y_valid_pred = model.predict(X_valid)
+    
+    y_valid_flat      = y_valid[:,:,0].flatten()
+    y_valid_pred_flat = y_valid_pred[:,:,0].flatten()
+    
+    df_valid.loc[:,'y'] = y_valid_flat
+    df_valid.loc[:,'y_pred'] = y_valid_pred_flat    
+    
+    results[f'u{units} sl{sequence_length}'] = accuracy_one_hot(df_valid['y'],one_hot_of_peaks(df_valid['y_pred']))
+    
+
 if __name__ == '__main__':
   print('banana clipper!')
