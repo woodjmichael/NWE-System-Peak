@@ -245,8 +245,8 @@ print('geron eval',model.evaluate(X_valid, Y_valid))
 
 t_geron = dt.datetime.now()
 
-plot_learning_curves(history.history['loss'], history.history['val_loss'])
-plt.show()
+#plot_learning_curves(history.history['loss'], history.history['val_loss'])
+#plt.show()
 
 #
 # results

@@ -1098,7 +1098,6 @@ def train_lstm_v3(  num_x_signals, num_y_signals, path_checkpoint,
                 callback_tensorboard,]
                 #callback_reduce_lr]
 
-  #%%time
   hx = model.fit(  x=generator,
                    epochs=epochs,
                    steps_per_epoch=100,
@@ -1106,7 +1105,72 @@ def train_lstm_v3(  num_x_signals, num_y_signals, path_checkpoint,
                    callbacks=callbacks,
                    verbose=verbose)     
 
-  return model, hx       
+  return model, hx
+
+def train_lstm_v4(  num_x_signals:int, num_y_signals:int, path_checkpoint:str, 
+                    generator, validation_data, units:list, epochs:int, 
+                    layers:int=1, patience:int=5, verbose:int=1,dropout:list=None,
+                    afuncs={'lstm':'relu','dense':'sigmoid'},
+                    loss='mse',):
+  
+  model = Sequential()
+  # model.add( LSTM(  units,
+  #                   return_sequences=True,
+  #                   input_shape=(None, num_x_signals,)))
+  model.add( LSTM(units[0],
+                  return_sequences=True,
+                  input_shape=(None, num_x_signals,),
+                  activation=afuncs['lstm']) )
+  if dropout is not None:
+    model.add(Dropout(dropout[0]))
+  if (layers == 2) and (len(units)>1):
+    # model.add( LSTM(  units,
+    #                   return_sequences=True) ) 
+    model.add( LSTM(  units[1],
+                  return_sequences=True,
+                  activation=afuncs['lstm']) ) 
+    if dropout is not None:
+      model.add(Dropout(dropout[1]))
+    
+  model.add( Dense( num_y_signals, activation='sigmoid') )  
+
+  model.compile(loss=loss, optimizer='adam')
+  model.summary()                  
+  
+  callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
+                                          monitor='val_loss',
+                                          verbose=verbose,
+                                          save_weights_only=True,
+                                          save_best_only=True)
+  
+  callback_early_stopping = EarlyStopping(  monitor='val_loss',
+                                            patience=patience,
+                                            verbose=verbose,
+                                            restore_best_weights=True)
+  
+  callback_tensorboard = TensorBoard( log_dir='./logs/',
+                                      histogram_freq=0,
+                                      write_graph=False)
+  
+  # callback_reduce_lr = ReduceLROnPlateau(monitor='val_loss',
+  #                                     factor=0.1,
+  #                                     min_lr=1e-4,
+  #                                     patience=0,
+  #                                     verbose=verbose)
+  
+  callbacks = [ callback_early_stopping,
+                callback_checkpoint,
+                callback_tensorboard,]
+                #callback_reduce_lr]
+
+  hx = model.fit(  x=generator,
+                   epochs=epochs,
+                   steps_per_epoch=100,
+                   validation_data=validation_data,
+                   callbacks=callbacks,
+                   verbose=verbose)    
+
+  return model, hx     
 
 def config_new(plot_theme,seed):
     os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -1285,7 +1349,7 @@ def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
     plt.plot(t,y,alpha=alpha)
     begin, end = begin + ppw, end + ppw
   plt.title(f'{int(end/ppw)-1} weeks from {period_start} to {period_end}')  
-
+  
 def plot_daily_overlaid(  df,ppd=96,begin=0,alpha=0.25,
                           period_start=None,period_end=None):
   end = begin + ppd
@@ -1299,7 +1363,7 @@ def plot_daily_overlaid(  df,ppd=96,begin=0,alpha=0.25,
     y = df2.iloc[begin:end].values.flatten()
     plt.plot(t,y,alpha=alpha)
     begin, end = begin + ppd, end + ppd
-  plt.title(f'{int(end/ppd)-1} weeks from {period_start} to {period_end}')
+  plt.title(f'{int(end/ppd)-1} weeks from {period_start} to {period_end}')  
 
 def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
                           alpha=0.25,xsize=20,ysize=6):
@@ -1330,8 +1394,8 @@ def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
   ax3.title.set_text(f'Distribution of peak hr')
   f.gca().yaxis.set_major_formatter(PercentFormatter(1))
 
-  f.show()  
-
+  f.show()
+  
 def plot_training_history(hx):
   hx_loss = hx.history['loss']
   hx_val_loss = hx.history['val_loss']
@@ -1342,8 +1406,7 @@ def plot_training_history(hx):
   plt.legend(['Train Set Loss','Test Set Loss'])
   plt.ylabel('MSE (scaled data) [kW/kW]')
   plt.xlabel('Training Epoch')
-  plt.title('Training History')
-
+  plt.title('Training History')   
 
 def accuracy_one_hot(true,pred):
     """ Measure the accuracy of two one hot vectors, inputs can be 1d numpy or dataseries"""
