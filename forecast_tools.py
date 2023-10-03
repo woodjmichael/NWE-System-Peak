@@ -551,54 +551,109 @@ def organize_dat_v2(df, shift_steps=96, sequence_length=96*7*2):
   
   return (num_x_signals, num_y_signals, generator, validation_data, load_scaler)
 
-def organize_dat_v3(df, shift_steps=96, sequence_length=96*7*2, train_split=0.9, batch_size=256, onehot=False):
 
-    # scalers
-    feature_scaler = MinMaxScaler()
-    load_scaler = MinMaxScaler()
 
-    # shift for forecast
-    if not onehot:
-      df_targets = df['Load (kW)'].shift(-shift_steps)
-    else:
-      df['Load (OH)'] = create_one_hot_vector_of_daily_peak_hr(df[['Load (kW)']])
-      df_targets = create_one_hot_vector_of_daily_peak_hr(df[['Load (kW)']]).shift(-shift_steps)
+""" Not clear this ever worked
+# def organize_dat_v3(df, shift_steps=96, sequence_length=96*7*2, train_split=0.9, 
+#                     batch_size=256, onehot=False):
 
-    # scale and adjust the length to remove NaNs caused by .shift()
-    x_data = feature_scaler.fit_transform(df.values)[0:-shift_steps]
-    y_data = load_scaler.fit_transform(df_targets.values[:-shift_steps,np.newaxis])
+#     # scalers
+#     feature_scaler = MinMaxScaler()
+#     load_scaler = MinMaxScaler()
 
-    num_data = len(x_data)
-    num_train = int(train_split * num_data)
-    num_test = num_data - num_train
+#     # shift for forecast
+#     if not onehot:
+#       df_targets = df['Load (kW)'].shift(-shift_steps)
+#     else:
+#       df['Load (OH)'] = create_one_hot_vector_of_daily_peak_hr(df[['Load (kW)']])
+#       df_targets = create_one_hot_vector_of_daily_peak_hr(df[['Load (kW)']]).shift(-shift_steps)
 
-    x_train = x_data[0:num_train]
-    x_test = x_data[num_train:]
-    len(x_train) + len(x_test)
+#     # scale and adjust the length to remove NaNs caused by .shift()
+#     x_data = feature_scaler.fit_transform(df.values)[0:-shift_steps]
+#     y_data = load_scaler.fit_transform(df_targets.values[:-shift_steps,np.newaxis])
 
-    y_train = y_data[0:num_train]
-    y_test = y_data[num_train:]
-    len(y_train) + len(y_test)
+#     num_data = len(x_data)
+#     num_train = int(train_split * num_data)
+#     num_test = num_data - num_train
 
-    num_x_signals = x_data.shape[1]
-    num_y_signals = y_data.shape[1]
+#     x_train = x_data[0:num_train]
+#     x_test = x_data[num_train:]
+#     len(x_train) + len(x_test)
 
-    generator = batch_generator(  batch_size,
-                                  sequence_length,
-                                  num_x_signals,
-                                  num_y_signals,
-                                  num_train,
-                                  x_train,
-                                  y_train)
+#     y_train = y_data[0:num_train]
+#     y_test = y_data[num_train:]
+#     len(y_train) + len(y_test)
 
-    x_batch, y_batch = next(generator)
+#     num_x_signals = x_data.shape[1]
+#     num_y_signals = y_data.shape[1]
 
-    validation_data = ( np.expand_dims(x_test, axis=0),
-                        np.expand_dims(y_test, axis=0))
+#     generator = batch_generator(  batch_size,
+#                                   sequence_length,
+#                                   num_x_signals,
+#                                   num_y_signals,
+#                                   num_train,
+#                                   x_train,
+#                                   y_train)
 
-    df = df.iloc[:-shift_steps, :]
-    df = df.iloc[num_train:, :]
-    return (num_x_signals, num_y_signals, generator, validation_data, load_scaler, df)
+#     x_batch, y_batch = next(generator)
+
+#     validation_data = ( np.expand_dims(x_test, axis=0),
+#                         np.expand_dims(y_test, axis=0))
+
+#     df = df.iloc[:-shift_steps, :]
+#     df = df.iloc[num_train:, :]
+#     return (num_x_signals, num_y_signals, generator, validation_data, load_scaler, df)
+"""
+
+def organize_dat_v4(df, L_sequence_in, L_sequence_out):#shift_steps=96, sequence_length=96*7*2):
+  train_split = 0.9
+  batch_size = 256
+
+  # scalers
+  feature_scaler = MinMaxScaler()
+  load_scaler = MinMaxScaler()
+  
+  # shift for forecast
+  #shift_steps = 1 * 24 * 4  # Number of time steps
+  df_targets = df['Load (kW)'].shift(-1*L_sequence_in)
+  
+  # scale and adjust the length
+  
+  x_data = feature_scaler.fit_transform(df.values)[0:-1*L_sequence_in]
+  y_data = load_scaler.fit_transform(df_targets.values[:-1*L_sequence_in,np.newaxis])
+  
+  #y_data = np.expand_dims(y_data,axis=1)
+
+  num_data = len(x_data)
+  num_train = int(train_split * num_data)
+  num_test = num_data - num_train
+
+  x_train = x_data[0:num_train]
+  x_test = x_data[num_train:]
+  len(x_train) + len(x_test)
+
+  y_train = y_data[0:num_train]
+  y_test = y_data[num_train:]
+  len(y_train) + len(y_test)
+
+  num_x_signals = x_data.shape[1]
+  num_y_signals = y_data.shape[1]
+
+  generator = train_batch_generator(  batch_size,
+                                L_sequence_in,
+                                L_sequence_in, # note! this is not a typo
+                                num_x_signals,
+                                num_y_signals,
+                                num_train,
+                                x_train,
+                                y_train)
+  
+  x_batch, y_batch = next(generator)
+
+  test_data = ( np.expand_dims(x_test, axis=0),
+                      np.expand_dims(y_test, axis=0))
+  
+  return (num_x_signals, num_y_signals, generator, test_data, load_scaler)
 
 """
 Generator function for creating random batches of training-data.
@@ -625,7 +680,34 @@ def batch_generator(batch_size, sequence_length, num_x_signals, num_y_signals, n
             x_batch[i] = x_train_scaled[idx:idx+sequence_length]
             y_batch[i] = y_train_scaled[idx:idx+sequence_length]
         
-        yield (x_batch, y_batch)   
+        yield (x_batch, y_batch)
+        
+"""
+Generator function for creating random batches of training-data.
+"""
+def train_batch_generator(batch_size, L_sequence_in, L_sequence_out, n_x_signals, n_y_signals, n, x, y):
+    
+    # Infinite loop.
+    while True:
+        # Allocate a new array for the batch of input-signals.
+        x_shape = (batch_size, L_sequence_in, n_x_signals)
+        x_batch = np.zeros(shape=x_shape, dtype=np.float16)
+
+        # Allocate a new array for the batch of output-signals.
+        y_shape = (batch_size, L_sequence_out, n_y_signals)
+        y_batch = np.zeros(shape=y_shape, dtype=np.float16)
+
+        # Fill the batch with random sequences of data.
+        for i in range(batch_size):
+            # Get a random start-index.
+            # This points somewhere into the training-data.
+            idx = np.random.randint(n - L_sequence_in - L_sequence_out)
+            
+            # Copy the sequences of data starting at this index.
+            x_batch[i] = x[idx:idx+L_sequence_in]
+            y_batch[i] = y[idx:idx+L_sequence_out]
+        
+        yield (x_batch, y_batch)
 
 
 def loss_mse_warmup(y_true, y_pred):
@@ -1107,7 +1189,7 @@ def train_lstm_v3(  num_x_signals, num_y_signals, path_checkpoint,
 
   return model, hx
 
-def train_lstm_v4(  num_x_signals:int, num_y_signals:int, path_checkpoint:str, 
+def train_lstm_v4(  n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
                     generator, validation_data, units:list, epochs:int, 
                     layers:int=1, patience:int=5, verbose:int=1,dropout:list=None,
                     afuncs={'lstm':'relu','dense':'sigmoid'},
@@ -1119,7 +1201,7 @@ def train_lstm_v4(  num_x_signals:int, num_y_signals:int, path_checkpoint:str,
   #                   input_shape=(None, num_x_signals,)))
   model.add( LSTM(units[0],
                   return_sequences=True,
-                  input_shape=(None, num_x_signals,),
+                  input_shape=(None, n_features_x,),
                   activation=afuncs['lstm']) )
   if dropout is not None:
     model.add(Dropout(dropout[0]))
@@ -1132,7 +1214,7 @@ def train_lstm_v4(  num_x_signals:int, num_y_signals:int, path_checkpoint:str,
     if dropout is not None:
       model.add(Dropout(dropout[1]))
     
-  model.add( Dense( num_y_signals, activation='sigmoid') )  
+  model.add( Dense( 1,activation='sigmoid') )  
 
   model.compile(loss=loss, optimizer='adam')
   model.summary()                  
@@ -1332,12 +1414,31 @@ def plot_predictions_week(y_true, y_pred, week=0, ppd=96):
   
   plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
             f'(skill {skill:.2})')
-  plt.show()   
+  plt.show()
+  
+def plot_one_prediction(model,x_test,y_test,n_in,n_out,begin=0):
+  
+  y_pred = model.predict(x_test[:,begin:begin+n_in,:])
+  
+  t_in = np.arange(n_in)
+  t_out = np.arange(n_in,n_in+n_out)
+  
+  plt.plot(t_in,x_test[0,begin:begin+n_in,0],label='x test f0')
+  plt.plot(t_in,x_test[0,begin:begin+n_in,1],label='x test f1')
+  plt.plot(t_in,x_test[0,begin:begin+n_in,2],label='x test f2')
+  plt.plot(t_in,x_test[0,begin:begin+n_in,3],label='x test f3')
+  plt.plot(t_in,x_test[0,begin:begin+n_in,4],label='x test f4')
+  plt.plot(t_in,x_test[0,begin:begin+n_in,5],label='x test f5')
+  plt.plot(t_out,y_test[0,begin:begin+n_out,0],label='y test')
+  plt.plot(t_out,y_pred[0,:n_out,0],'--',label='y pred')
+  plt.legend()
+  plt.show() 
+  
 
 def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
-                         period_start=None,period_end=None):
-  ppw = ppd*7 # points per week
-  end = begin + 7*ppd
+                         period_start=None,period_end=None,days_per_week=7):
+  ppw = ppd*days_per_week # points per week
+  end = begin + days_per_week*ppd
   if not period_start:
     df2 = df['Load (kW)']
   else:
@@ -1533,5 +1634,162 @@ def run_the_joules_peak(
     results[f'u{units} sl{sequence_length}'] = accuracy_one_hot(df_valid['y'],one_hot_of_peaks(df_valid['y_pred']))
     
 
+class RunTheJoules:
+    def __init__(self,
+                 site,                     
+                 filename,
+                 models_dir='./models/',
+                 data_points_per_day = 96,
+                 persist_lag_days = 1,
+                 data_col = 1,
+                 resample='15min'):
+        self.site = site
+        self.data_points_per_day = data_points_per_day
+        self.persist_lag = data_points_per_day * persist_lag_days
+        self.models_dir = models_dir
+        self.filename = filename
+        self.data_col = data_col
+        self.resample = resample,
+        self.df = self.get_dat()
+        
+    def get_dat(self):
+        df = pd.read_csv(  self.filename,   
+                            comment='#',
+                            parse_dates=True,
+                            index_col=0,
+                            usecols=[0,self.data_col] )
+
+        df.columns = ['Load (kW)']
+
+        #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
+        df = df.resample('15min').mean()
+        #df = df.tz_convert(None)
+        df = df.fillna(method='ffill').fillna(method='bfill')
+        
+        df = df[df.index.weekday < 5 ] # remove weekends
+
+        df = emd_sift(df)
+                                    
+        #df['Day'] = df.index.dayofyear
+        #df['Hour'] = df.index.hour
+        #df['Weekday'] = df.index.dayofweek
+        
+        df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
+        
+        df = df.fillna(method='bfill')
+        
+        df = df[:'2022-08']
+
+        return df
+        
+    def run_them_fast(self,features,units,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
+                      output=False,plots=False):
+        layers = len(units)
+        
+        
+        df = self.df[features]
+        
+        # header       
+        units_str = ''
+        for u in units:
+            units_str += (str(u)+' ')
+        
+        print(f'\n\n////////// units={units_str} layers={layers} //////////\n')
+
+        # meta
+        y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
+        path_checkpoint = self.models_dir+ f'{self.site} lstm {units_str} {y}{m}{d}.keras'
+
+        # ( n_features_x, n_features_y, 
+        #     batchgen, dat_valid, 
+        #     scaler) = organize_dat_v2( df=df, 
+        #                                 shift_steps=self.data_points_per_day,
+        #                                     sequence_length=n_in)
+            
+        ( n_features_x, n_features_y, 
+            batchgen, dat_valid, 
+            scaler) = organize_dat_v4( df, n_in, n_out)
+
+        (x_test, y_test) = dat_valid 
+
+        # np
+        y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],
+                                                    horizon=self.persist_lag)
+
+        # model                        
+        model, hx = train_lstm_v4(  n_features_x, n_in, n_out, 
+                                        path_checkpoint, batchgen, 
+                                        dat_valid, units, epochs,
+                                        layers, patience, 
+                                        verbose, dropout)
+                                    
+        # evaluate
+        y_test_predict = model.predict(x_test)
+
+        y_test_pred_kw = scaler.inverse_transform(y_test_predict[:,:,0]).flatten()
+        y_test_kw      = scaler.inverse_transform(y_test[:,:,0]).flatten()
+
+        test_rmse_np = rmse(  y_test_kw[self.persist_lag:], 
+                                y_test_kw[:-(self.persist_lag )] )
+
+        results = {}
+        results['test_rmse_pred']     = rmse(y_test_kw, y_test_pred_kw)
+        results['test_skill']         = 1 - results['test_rmse_pred'] / test_rmse_np  
+        results['test_std_diff_pred'] = np.diff(y_test_pred_kw).std()
+        results['epochs']             = len(hx.history['loss']) - patience
+
+        if output:
+            print('test set')
+            print(f'rmse np   {test_rmse_np:.2f}')
+            print(f'rmse pred {rmse(y_test_kw, y_test_pred_kw):.2f}')
+            print(f'skill     {1 - rmse(y_test_kw, y_test_pred_kw)/test_rmse_np:.3f}')
+
+        # plot
+        if plots:
+            plot_training_history(hx)
+            plot_predictions_week(y_test_kw, y_test_pred_kw, week=0)
+            plot_one_prediction(model,x_test,y_test,n_in,n_out)
+
+        return results, hx.history
+      
 if __name__ == '__main__':
-  print('banana clipper!')
+
+  # d = range(1000)
+  # df = pd.DataFrame({'Load (kW)':d},index=pd.date_range('2021-1-1 0:00',periods=len(d),freq='1h'))
+  
+  # n_features_x, n_features_y, batchgen, \
+  #   dat_valid, load_scaler = organize_dat_v4(df,L_sequence_in=48,L_sequence_out=36)#shift_steps=48,sequence_length=48)
+  # (x_test, y_test) = dat_valid 
+
+  # # model                                  
+  # model, hx = train_lstm_v4(  n_features_x, n_features_y, 
+  #                                 './sandbox/', batchgen, 
+  #                                 dat_valid, units=[12,12], epochs=1,
+  #                                 layers=2, patience=15, 
+  #                                 verbose=1, dropout=[0,0])
+
+  jpl = RunTheJoules('acn-jpl',
+                    models_dir='./models/acn-jpl/',
+                    filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv')
+
+  #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
+
+  # results, history = jpl.run_them_fast(   features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+  #                                         units=[24,24],dropout=[0,0],n_in=96,n_out=96,
+  #                                         epochs=100,patience=10,
+  #                                         plots=False,output=False,verbose=0)
+  
+  rx = {}
+  hx = {}
+  for units1 in [24,48,96,128,256,512]:
+    for units2 in [24,48,96,128,256,512]:
+      for dropout in [0., 0.2]:
+        for n_in in [96,2*96,3*96]:
+          model_name = f'lstm u1{units1}u2{units2}d{dropout}n{n_in}'        
+          results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+                            units=[units1,units2],dropout=2*[dropout],n_in=n_in,n_out=96,
+                            epochs=100,patience=15,
+                            plots=False,output=True,verbose=0)
+  rx = pd.DataFrame(rx).transpose()
+  rx.to_csv(jpl.model_dir+'results.csv')
+  rx
