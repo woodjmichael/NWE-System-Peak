@@ -1388,55 +1388,10 @@ def create_peak_vector(df):
 
     df['Lpeak'] = df['Lpeak'].fillna(method='ffill')
 
-    return df['Lpeak']         
+    return df['Lpeak']    
 
-def plot_predictions_week(y_true, y_pred, week=0, ppd=96):
-
-    ppw = ppd*7 # points per week, points per day
-    t = np.arange(ppw)
-
-    y_true_wk = y_true[(week+1)*ppw:(week+2)*ppw]
-    y_np1w_wk = y_true[(week)*ppw    :(week+1)*ppw]
-    y_pred_wk = y_pred[(week+1)*ppw:(week+2)*ppw]
-
-    rmse_np1w = np.sqrt(np.mean(np.square(y_np1w_wk - y_true_wk)))
-    rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
-    skill = (rmse_np1w - rmse_pred)/rmse_np1w
-
-    plt.figure(figsize=(20,6))
-    plt.plot( t,y_true_wk,
-                        t,y_np1w_wk,
-                        t,y_pred_wk)
-    
-    plt.legend([    'true',
-                                f'np 1 wk (rmse {rmse_np1w:.0f})', 
-                                f'predict (rmse {rmse_pred:.0f})'])
-    
-    plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
-                        f'(skill {skill:.2})')
-    plt.show()
-    
-def plot_one_prediction(model,x_test,y_test,n_in,n_out,begin=0):
-    
-    y_pred = model.predict(x_test[:,begin:begin+n_in,:])
-    
-    t_in = np.arange(n_in)
-    t_out = np.arange(n_in,n_in+n_out)
-    
-    plt.plot(t_in,x_test[0,begin:begin+n_in,0],label='x test f0')
-    plt.plot(t_in,x_test[0,begin:begin+n_in,1],label='x test f1')
-    plt.plot(t_in,x_test[0,begin:begin+n_in,2],label='x test f2')
-    plt.plot(t_in,x_test[0,begin:begin+n_in,3],label='x test f3')
-    plt.plot(t_in,x_test[0,begin:begin+n_in,4],label='x test f4')
-    plt.plot(t_in,x_test[0,begin:begin+n_in,5],label='x test f5')
-    plt.plot(t_out,y_test[0,begin:begin+n_out,0],label='y test')
-    plt.plot(t_out,y_pred[0,:n_out,0],'--',label='y pred')
-    plt.legend()
-    plt.show() 
-    
-
-def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
-                                                 period_start=None,period_end=None,days_per_week=7):
+def plot_weekly_overlaid(   df,ppd=96,begin=0,alpha=0.25,
+                            period_start=None,period_end=None,days_per_week=7):
     ppw = ppd*days_per_week # points per week
     end = begin + days_per_week*ppd
     if not period_start:
@@ -1452,7 +1407,7 @@ def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
     plt.title(f'{int(end/ppw)-1} weeks from {period_start} to {period_end}')    
     
 def plot_daily_overlaid(    df,ppd=96,begin=0,alpha=0.25,
-                                                    period_start=None,period_end=None):
+                            period_start=None,period_end=None):
     end = begin + ppd
     if not period_start:
         df2 = df['Load (kW)']
@@ -1466,8 +1421,8 @@ def plot_daily_overlaid(    df,ppd=96,begin=0,alpha=0.25,
         begin, end = begin + ppd, end + ppd
     plt.title(f'{int(end/ppd)-1} weeks from {period_start} to {period_end}')    
 
-def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
-                                                    alpha=0.25,xsize=20,ysize=6):
+def plot_daily_peak_hours(  df,month,day_of_week,samples_per_day=24,
+                            alpha=0.25,xsize=20,ysize=6):
     samples = samples_per_day
     idx = np.logical_and( df.index.month == month, 
                                                 df.index.dayofweek == day_of_week)
@@ -1496,18 +1451,6 @@ def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
     f.gca().yaxis.set_major_formatter(PercentFormatter(1))
 
     f.show()
-    
-def plot_training_history(hx):
-    hx_loss = hx.history['loss']
-    hx_val_loss = hx.history['val_loss']
-    t = np.arange(len(hx_loss))
-
-    plt.figure(figsize=(10,6))
-    plt.plot(t,hx_loss,t,hx_val_loss)
-    plt.legend(['Train Set Loss','Test Set Loss'])
-    plt.ylabel('MSE (scaled data) [kW/kW]')
-    plt.xlabel('Training Epoch')
-    plt.title('Training History')     
 
 def accuracy_one_hot(true,pred):
         """ Measure the accuracy of two one hot vectors, inputs can be 1d numpy or dataseries"""
@@ -1617,10 +1560,10 @@ def run_the_joules_peak(
                                 callback_checkpoint,]
 
         hx = model.fit(    x=generator,
-                                epochs=epochs,
-                                steps_per_epoch=100,
-                                validation_data=(X_valid,y_valid),
-                                callbacks=callbacks)                
+                            epochs=epochs,
+                            steps_per_epoch=100,
+                            validation_data=(X_valid,y_valid),
+                            callbacks=callbacks)                
         
         model.load_weights(path_checkpoint)
         y_valid_pred = model.predict(X_valid)
@@ -1640,17 +1583,22 @@ class RunTheJoules:
                 filename,
                 models_dir='./models/',
                 data_points_per_day = 96,
-                persist_lag_days = 1,
+                persist_days = 1,
                 data_col = 1,
-                resample='15min'):
+                resample='15min',
+                days_of_week = [0,1,2,3,4,5,6],
+                plot_overlaid_days=False):
         self.site = site
         self.data_points_per_day = data_points_per_day
-        self.persist_lag = data_points_per_day * persist_lag_days
+        self.persist_lag = data_points_per_day * persist_days
         self.models_dir = models_dir
         self.filename = filename
         self.data_col = data_col
-        self.resample = resample,
+        self.t_resample = resample
+        self.days_of_week = days_of_week
         self.df = self.get_dat()
+        if plot_overlaid_days:
+            plot_weekly_overlaid(self.df,days_per_week=plot_overlaid_days)
             
     def get_dat(self):
         df = pd.read_csv(   self.filename,     
@@ -1662,30 +1610,90 @@ class RunTheJoules:
         df.columns = ['Load (kW)']
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
-        df = df.resample('15min').mean()
+        df = df.resample(self.t_resample).mean()
         #df = df.tz_convert(None)
         df = df.fillna(method='ffill').fillna(method='bfill')
         
-        df = df[df.index.weekday < 5 ] # remove weekends
+        df = df[df.index.weekday.isin(self.days_of_week)]
 
         df = emd_sift(df)
                                                                 
         #df['Day'] = df.index.dayofyear
         #df['Hour'] = df.index.hour
-        #df['Weekday'] = df.index.dayofweek
+        df['Weekday'] = [0 if x in [5,6] else 1 for x in df.index.weekday]
         
         df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
         
-        df = df.fillna(method='bfill')
+        df = df.dropna()#df.fillna(method='bfill')
         
         df = df[:'2022-08']
 
         return df
+    
+    def plot_training_history(self,hx):
+        hx_loss = hx.history['loss']
+        hx_val_loss = hx.history['val_loss']
+        t = np.arange(len(hx_loss))
+
+        plt.figure(figsize=(10,6))
+        plt.plot(t,hx_loss,t,hx_val_loss)
+        plt.legend(['Train Set Loss','Test Set Loss'])
+        plt.ylabel('MSE (scaled data) [kW/kW]')
+        plt.xlabel('Training Epoch')
+        plt.title('Training History')
+        
+    def plot_predictions(self, y_true, y_pred, offset_days=0, period_days=7):
+
+        Loffset = self.data_points_per_day*offset_days
+        Lperiod = self.data_points_per_day*period_days # points per week, points per day
+        Lpersist = self.persist_lag # persistence lag (points per persistence)
+        t = np.arange(Lperiod)
+
+        y_true_period = y_true[Loffset+Lpersist :    Loffset+Lpersist+Lperiod    ]
+        y_pers_period = y_true[Loffset          :    Loffset+Lperiod             ]
+        y_pred_period = y_pred[Loffset+Lpersist :    Loffset+Lpersist+Lperiod    ]
+
+        rmse_pers = np.sqrt(np.mean(np.square(y_pers_period - y_true_period)))
+        rmse_pred = np.sqrt(np.mean(np.square(y_pred_period - y_true_period)))
+        skill = (rmse_pers - rmse_pred)/rmse_pers
+
+        plt.figure(figsize=(20,6))
+        plt.plot(   t,y_true_period,
+                    t,y_pers_period,
+                    t,y_pred_period)
+        
+        plt.legend(['true',
+                    f'persist (rmse {rmse_pers:.0f})', 
+                    f'predict (rmse {rmse_pred:.0f})'])
+        
+        plt.title(f'test period skill {skill:.2})')
+        plt.show()
+        
+    def plot_one_prediction(self, begin=0):
+        
+        y_pred = self.model.predict(self.x_test[:,begin:begin+self.n_in,:])
+        
+        t_in = np.arange(self.n_in)
+        t_out = np.arange(self.n_in,self.n_in+self.n_out)
+        
+        plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,0],label='x test f0')
+        plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,1],label='x test f1')
+        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,2],label='x test f2')
+        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,3],label='x test f3')
+        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,4],label='x test f4')
+        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,5],label='x test f5')
+        plt.plot(t_out,self.y_test[0,begin:begin+self.n_out,0],label='y test')
+        plt.plot(t_out,y_pred[0,:self.n_out,0],'--',label='y pred')
+        plt.legend()
+        plt.show() 
             
     def run_them_fast(self,features,units,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
                       output=False,plots=False):
-        layers = len(units)
         
+        self.n_in = n_in
+        self.n_out = n_out
+        
+        layers = len(units)
         
         df = self.df[features]
         
@@ -1694,39 +1702,30 @@ class RunTheJoules:
         for u in units:
             units_str += (str(u)+' ')
         
-        print(f'\n\n////////// units={units_str} layers={layers} //////////\n')
+        print(f'\n\n////////// lstm u{units[0]}-{units[1]}d{dropout}n{self.n_in} //////////\n')
 
-        # meta
         y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
         path_checkpoint = self.models_dir+ f'{self.site} lstm {units_str} {y}{m}{d}.keras'
-
-        # ( n_features_x, n_features_y, 
-        #         batchgen, dat_valid, 
-        #         scaler) = organize_dat_v2( df=df, 
-        #                                                                 shift_steps=self.data_points_per_day,
-        #                                                                         sequence_length=n_in)
                 
         ( n_features_x, n_features_y, 
             batchgen, dat_valid, 
-            scaler) = organize_dat_v4( df, n_in, n_out)
+            scaler) = organize_dat_v4( df, self.n_in, self.n_out)
 
-        (x_test, y_test) = dat_valid 
+        (self.x_test, self.y_test) = dat_valid 
 
-        # np
-        y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],horizon=self.persist_lag)
+        #y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],horizon=self.persist_lag)
 
-        # model                                                
-        model, hx = train_lstm_v4(  n_features_x, n_in, n_out, 
+        self.model, hx = train_lstm_v4(  n_features_x, self.n_in, self.n_out, 
                                     path_checkpoint, batchgen, 
                                     dat_valid, units, epochs,
                                     layers, patience, 
                                     verbose, dropout)
                                                                 
         # evaluate
-        y_test_predict = model.predict(x_test)
+        y_test_predict = self.model.predict(self.x_test)
 
         y_test_pred_kw = scaler.inverse_transform(y_test_predict[:,:,0]).flatten()
-        y_test_kw            = scaler.inverse_transform(y_test[:,:,0]).flatten()
+        y_test_kw            = scaler.inverse_transform(self.y_test[:,:,0]).flatten()
 
         test_rmse_np = rmse(    y_test_kw[self.persist_lag:], 
                                 y_test_kw[:-(self.persist_lag )] )
@@ -1745,46 +1744,32 @@ class RunTheJoules:
 
         # plot
         if plots:
-            plot_training_history(hx)
-            plot_predictions_week(y_test_kw, y_test_pred_kw, week=0)
-            plot_one_prediction(model,x_test,y_test,n_in,n_out)
+            self.plot_training_history(hx)
+            self.plot_predictions(y_test_kw, y_test_pred_kw, period_days=2*len(self.days_of_week))
+            self.plot_one_prediction()
 
         return results, hx.history
             
 if __name__ == '__main__':
 
-    # d = range(1000)
-    # df = pd.DataFrame({'Load (kW)':d},index=pd.date_range('2021-1-1 0:00',periods=len(d),freq='1h'))
-    
-    # n_features_x, n_features_y, batchgen, \
-    #     dat_valid, load_scaler = organize_dat_v4(df,L_sequence_in=48,L_sequence_out=36)#shift_steps=48,sequence_length=48)
-    # (x_test, y_test) = dat_valid 
-
-    # # model                                                                    
-    # model, hx = train_lstm_v4(    n_features_x, n_features_y, 
-    #                                                                 './sandbox/', batchgen, 
-    #                                                                 dat_valid, units=[12,12], epochs=1,
-    #                                                                 layers=2, patience=15, 
-    #                                                                 verbose=1, dropout=[0,0])
-
-    jpl = RunTheJoules( 'acn-jpl',
+    wd = RunTheJoules( 'acn-jpl',
                         models_dir='./models/acn-jpl/',
                         #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
-                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
-                        )
+                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/train_JPL_v2.csv',
+                        plot_overlaid_days=False,
+                        persist_days=7,
+                        days_of_week=[0,1,2,3,4,5,6])
 
-    #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
-
-    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units=[24,24],
-                                        dropout=2*[0.2],
+    results, history = wd.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+                                        units=[12,12],
+                                        dropout=2*[0],
                                         n_in=96,
                                         n_out=96,
-                                        epochs=1,
+                                        epochs=5,
                                         patience=15,
-                                        plots=False,
+                                        plots=True,
                                         output=True,
-                                        verbose=0)
+                                        verbose=1)
     
     # rx = {}
     # hx = {}
