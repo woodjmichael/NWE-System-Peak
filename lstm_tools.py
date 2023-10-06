@@ -10,6 +10,7 @@ import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import MinMaxScaler
+from pickle import dump, load
 from statsmodels.tsa.stattools import adfuller # upgrade statsmodels (at least 0.11.1)
 from scipy.stats import shapiro, mode
 
@@ -38,6 +39,14 @@ def config(plot_theme,seed,precision):
         pd.set_option('precision', precision)
         np.random.seed(seed)
         tf.random.set_seed(seed) 
+        
+def emd_sift(df):
+    imf = emd.sift.sift(df['Load (kW)'].values)
+
+    for i in range(imf.shape[1]):
+            df['IMF%s'%(i+1)] = imf[:,i]    
+
+    return df    
 
 def get_dat(IS_COLAB,site,features,emd=True):
 
@@ -328,7 +337,7 @@ def get_ev_dat(features=['Load (kW)']):
     df = df.tz_convert(None)
     df = df.fillna(method='ffill')        
 
-    df = ft.emd_sift(df)
+    df = emd_sift(df)
                                                                 
     df['Day'] = df.index.dayofyear
     df['Hour'] = df.index.hour
@@ -338,7 +347,7 @@ def get_ev_dat(features=['Load (kW)']):
 
 def get_bills_dat(features=['Load (kW)']):
         df = pd.read_csv('/content/drive/MyDrive/bailey_load.csv',parse_dates=True, index_col=0)
-        df = ft.emd_sift(df)
+        df = emd_sift(df)
         df['Day'] = df.index.dayofyear
         df['Hour'] = df.index.hour
         df['Weekday'] = df.index.dayofweek        
@@ -347,7 +356,7 @@ def get_bills_dat(features=['Load (kW)']):
 def get_habitat_dat(features=['Load (kW)'],all_features=False):
         df = pd.read_csv('/content/drive/MyDrive/HabitatZEH_60min_processed2_mjw.csv',parse_dates=True, index_col=0)
         df = df[['Load (kW)']].loc['2005-12-7':'2022-5-2'] # full days only
-        df = ft.emd_sift(df)
+        df = emd_sift(df)
         df['Day'] = df.index.dayofyear
         df['Hour'] = df.index.hour
         df['Weekday'] = df.index.dayofweek        
@@ -364,7 +373,7 @@ def get_gdrive_dat(filename, cols=['Datetime', 'Load (kW)'], features='All'):
                                         usecols=cols)
         df.columns = ['Load (kW)']
 
-        df = ft.emd_sift(df)
+        df = emd_sift(df)
         df['Day'] = df.index.dayofyear
         df['Hour'] = df.index.hour
         df['Weekday'] = df.index.dayofweek
@@ -435,15 +444,7 @@ def import_temp_nwe(path):
         print('max dt',df.index.to_series().diff().max())
         print('min dt',df.index.to_series().diff().min())
         print('')
-        return df    
-
-def emd_sift(df):
-    imf = emd.sift.sift(df['Load (kW)'].values)
-
-    for i in range(imf.shape[1]):
-            df['IMF%s'%(i+1)] = imf[:,i]    
-
-    return df            
+        return df      
 
 """
 Organize data into batches for training
@@ -605,56 +606,6 @@ def organize_dat_v2(df, shift_steps=96, sequence_length=96*7*2):
 #         return (num_x_signals, num_y_signals, generator, validation_data, load_scaler, df)
 """
 
-def organize_dat_v4(df, L_sequence_in, L_sequence_out):#shift_steps=96, sequence_length=96*7*2):
-    train_split = 0.9
-    batch_size = 256
-
-    # scalers
-    feature_scaler = MinMaxScaler()
-    load_scaler = MinMaxScaler()
-    
-    # shift for forecast
-    #shift_steps = 1 * 24 * 4    # Number of time steps
-    df_targets = df['Load (kW)'].shift(-1*L_sequence_in)
-    
-    # scale and adjust the length
-    
-    x_data = feature_scaler.fit_transform(df.values)[0:-1*L_sequence_in]
-    y_data = load_scaler.fit_transform(df_targets.values[:-1*L_sequence_in,np.newaxis])
-    
-    #y_data = np.expand_dims(y_data,axis=1)
-
-    num_data = len(x_data)
-    num_train = int(train_split * num_data)
-    num_test = num_data - num_train
-
-    x_train = x_data[0:num_train]
-    x_test = x_data[num_train:]
-    len(x_train) + len(x_test)
-
-    y_train = y_data[0:num_train]
-    y_test = y_data[num_train:]
-    len(y_train) + len(y_test)
-
-    num_x_signals = x_data.shape[1]
-    num_y_signals = y_data.shape[1]
-
-    generator = train_batch_generator(    batch_size,
-                                                                L_sequence_in,
-                                                                L_sequence_in, # note! this is not a typo
-                                                                num_x_signals,
-                                                                num_y_signals,
-                                                                num_train,
-                                                                x_train,
-                                                                y_train)
-    
-    x_batch, y_batch = next(generator)
-
-    test_data = ( np.expand_dims(x_test, axis=0),
-                                            np.expand_dims(y_test, axis=0))
-    
-    return (num_x_signals, num_y_signals, generator, test_data, load_scaler)
-
 """
 Generator function for creating random batches of training-data.
 """
@@ -679,33 +630,6 @@ def batch_generator(batch_size, sequence_length, num_x_signals, num_y_signals, n
                         # Copy the sequences of data starting at this index.
                         x_batch[i] = x_train_scaled[idx:idx+sequence_length]
                         y_batch[i] = y_train_scaled[idx:idx+sequence_length]
-                
-                yield (x_batch, y_batch)
-                
-"""
-Generator function for creating random batches of training-data.
-"""
-def train_batch_generator(batch_size, L_sequence_in, L_sequence_out, n_x_signals, n_y_signals, n, x, y):
-        
-        # Infinite loop.
-        while True:
-                # Allocate a new array for the batch of input-signals.
-                x_shape = (batch_size, L_sequence_in, n_x_signals)
-                x_batch = np.zeros(shape=x_shape, dtype=np.float16)
-
-                # Allocate a new array for the batch of output-signals.
-                y_shape = (batch_size, L_sequence_out, n_y_signals)
-                y_batch = np.zeros(shape=y_shape, dtype=np.float16)
-
-                # Fill the batch with random sequences of data.
-                for i in range(batch_size):
-                        # Get a random start-index.
-                        # This points somewhere into the training-data.
-                        idx = np.random.randint(n - L_sequence_in - L_sequence_out)
-                        
-                        # Copy the sequences of data starting at this index.
-                        x_batch[i] = x[idx:idx+L_sequence_in]
-                        y_batch[i] = y[idx:idx+L_sequence_out]
                 
                 yield (x_batch, y_batch)
 
@@ -1188,71 +1112,7 @@ def train_lstm_v3( num_x_signals, num_y_signals, path_checkpoint,
                     verbose=verbose)         
 
     return model, hx
-
-def train_lstm_v4(  n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
-                    generator, validation_data, units:list, epochs:int, 
-                    layers:int=1, patience:int=5, verbose:int=1,dropout:list=None,
-                    afuncs={'lstm':'relu','dense':'sigmoid'},
-                    loss='mse',):
-    
-    model = Sequential()
-    # model.add( LSTM(    units,
-    #                                     return_sequences=True,
-    #                                     input_shape=(None, num_x_signals,)))
-    model.add( LSTM(units[0],
-                    return_sequences=True,
-                    input_shape=(None, n_features_x,),
-                    activation=afuncs['lstm']) )
-    if dropout is not None:
-        model.add(Dropout(dropout[0]))
-    if (layers == 2) and (len(units)>1):
-        # model.add( LSTM(    units,
-        #                                     return_sequences=True) ) 
-        model.add( LSTM( units[1],
-                        return_sequences=True,
-                        activation=afuncs['lstm']) ) 
-        if dropout is not None:
-            model.add(Dropout(dropout[1]))
-        
-    model.add( Dense( 1,activation='sigmoid') )    
-
-    model.compile(loss=loss, optimizer='adam')
-    model.summary()                                    
-    
-    callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
-                                            monitor='val_loss',
-                                            verbose=verbose,
-                                            save_weights_only=True,
-                                            save_best_only=True)
-    
-    callback_early_stopping = EarlyStopping(    monitor='val_loss',
-                                                patience=patience,
-                                                verbose=verbose,
-                                                restore_best_weights=True)
-    
-    callback_tensorboard = TensorBoard( log_dir='./logs/',
-                                        histogram_freq=0,
-                                        write_graph=False)
-    
-    # callback_reduce_lr = ReduceLROnPlateau(monitor='val_loss',
-    #                                                                         factor=0.1,
-    #                                                                         min_lr=1e-4,
-    #                                                                         patience=0,
-    #                                                                         verbose=verbose)
-    
-    callbacks = [ callback_early_stopping,
-                callback_checkpoint,
-                callback_tensorboard,]
-                #callback_reduce_lr]
-
-    hx = model.fit( x=generator,
-                    epochs=epochs,
-                    steps_per_epoch=100,
-                    validation_data=validation_data,
-                    callbacks=callbacks,
-                    verbose=verbose)        
-
-    return model, hx         
+       
 
 def config_new(plot_theme,seed):
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -1388,10 +1248,13 @@ def create_peak_vector(df):
 
     df['Lpeak'] = df['Lpeak'].fillna(method='ffill')
 
-    return df['Lpeak']    
+    return df['Lpeak']         
 
-def plot_weekly_overlaid(   df,ppd=96,begin=0,alpha=0.25,
-                            period_start=None,period_end=None,days_per_week=7):
+
+    
+
+def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
+                                                 period_start=None,period_end=None,days_per_week=7):
     ppw = ppd*days_per_week # points per week
     end = begin + days_per_week*ppd
     if not period_start:
@@ -1407,7 +1270,7 @@ def plot_weekly_overlaid(   df,ppd=96,begin=0,alpha=0.25,
     plt.title(f'{int(end/ppw)-1} weeks from {period_start} to {period_end}')    
     
 def plot_daily_overlaid(    df,ppd=96,begin=0,alpha=0.25,
-                            period_start=None,period_end=None):
+                                                    period_start=None,period_end=None):
     end = begin + ppd
     if not period_start:
         df2 = df['Load (kW)']
@@ -1421,8 +1284,8 @@ def plot_daily_overlaid(    df,ppd=96,begin=0,alpha=0.25,
         begin, end = begin + ppd, end + ppd
     plt.title(f'{int(end/ppd)-1} weeks from {period_start} to {period_end}')    
 
-def plot_daily_peak_hours(  df,month,day_of_week,samples_per_day=24,
-                            alpha=0.25,xsize=20,ysize=6):
+def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
+                                                    alpha=0.25,xsize=20,ysize=6):
     samples = samples_per_day
     idx = np.logical_and( df.index.month == month, 
                                                 df.index.dayofweek == day_of_week)
@@ -1451,6 +1314,8 @@ def plot_daily_peak_hours(  df,month,day_of_week,samples_per_day=24,
     f.gca().yaxis.set_major_formatter(PercentFormatter(1))
 
     f.show()
+    
+
 
 def accuracy_one_hot(true,pred):
         """ Measure the accuracy of two one hot vectors, inputs can be 1d numpy or dataseries"""
@@ -1523,13 +1388,13 @@ def run_the_joules_peak(
         y_train = df_train.TargetsOH.values[:,np.newaxis]
         y_valid = df_valid.TargetsOH.values[:,np.newaxis]
         
-        generator = batch_generator( batch_size=32,
-                                                                        sequence_length=sequence_length,
-                                                                        num_x_signals=len(features),
-                                                                        num_y_signals=len(targets),
-                                                                        num_train=num_train,
-                                                                        x_train_scaled=X_train,
-                                                                        y_train_scaled=y_train)     
+        generator = batch_generator(    batch_size=32,
+                                        sequence_length=sequence_length,
+                                        num_x_signals=len(features),
+                                        num_y_signals=len(targets),
+                                        num_train=num_train,
+                                        x_train_scaled=X_train,
+                                        y_train_scaled=y_train)     
         
         X_batch, y_batch = next(generator)
         
@@ -1560,10 +1425,10 @@ def run_the_joules_peak(
                                 callback_checkpoint,]
 
         hx = model.fit(    x=generator,
-                            epochs=epochs,
-                            steps_per_epoch=100,
-                            validation_data=(X_valid,y_valid),
-                            callbacks=callbacks)                
+                                epochs=epochs,
+                                steps_per_epoch=100,
+                                validation_data=(X_valid,y_valid),
+                                callbacks=callbacks)                
         
         model.load_weights(path_checkpoint)
         y_valid_pred = model.predict(X_valid)
@@ -1586,20 +1451,29 @@ class RunTheJoules:
                 persist_days = 1,
                 data_col = 1,
                 resample='15min',
-                days_of_week = [0,1,2,3,4,5,6],
-                plot_overlaid_days=False):
+                remove_days=False,):
         self.site = site
         self.data_points_per_day = data_points_per_day
+        self.persist_days = persist_days
         self.persist_lag = data_points_per_day * persist_days
         self.models_dir = models_dir
         self.filename = filename
         self.data_col = data_col
-        self.t_resample = resample
-        self.days_of_week = days_of_week
+        self.resample = resample
+        self.remove_days=remove_days
         self.df = self.get_dat()
-        if plot_overlaid_days:
-            plot_weekly_overlaid(self.df,days_per_week=plot_overlaid_days)
-            
+        self.model = None
+        
+        
+    def emd_sift(self, df):
+        imf = emd.sift.sift(df['Load (kW)'].values)
+
+        for i in range(imf.shape[1]):
+                df['IMF%s'%(i+1)] = imf[:,i]    
+
+        return df                  
+        
+        
     def get_dat(self):
         df = pd.read_csv(   self.filename,     
                             comment='#',
@@ -1610,25 +1484,227 @@ class RunTheJoules:
         df.columns = ['Load (kW)']
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
-        df = df.resample(self.t_resample).mean()
+        df = df.resample('15min').mean()
         #df = df.tz_convert(None)
         df = df.fillna(method='ffill').fillna(method='bfill')
         
-        df = df[df.index.weekday.isin(self.days_of_week)]
+        df.loc['2020-12-8'] = df['2020-12-1'].values
+        df.loc['2020-11-26'] = df['2020-11-19'].values
+        #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
+        df.loc['2022-5-24'] = df['2022-5-17'].values
+        
+        
+        if self.remove_days == 'weekends':
+            df = df[df.index.weekday < 5 ] 
+        elif self.remove_days == 'weekdays':
+            df = df[df.index.weekday >= 5 ]
 
-        df = emd_sift(df)
+        df = self.emd_sift(df)
                                                                 
         #df['Day'] = df.index.dayofyear
         #df['Hour'] = df.index.hour
-        df['Weekday'] = [0 if x in [5,6] else 1 for x in df.index.weekday]
+        #df['Weekday'] = df.index.dayofweek
         
         df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
         
-        df = df.dropna()#df.fillna(method='bfill')
+        df = df.fillna(method='bfill')
         
         df = df[:'2022-08']
 
         return df
+    
+    
+    def get_dat_test(self,filename,features):
+        df = pd.read_csv(   filename,     
+                            comment='#',
+                            parse_dates=True,
+                            index_col=0,
+                            usecols=[0,self.data_col],)
+
+        df.columns = ['Load (kW)']
+
+        #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
+        df = df.resample('15min').mean()
+        #df = df.tz_convert(None)
+        df = df.fillna(method='ffill').fillna(method='bfill')
+        
+        # df.loc['2020-12-8'] = df['2020-12-1'].values
+        # df.loc['2020-11-26'] = df['2020-11-19'].values
+        # #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
+        # df.loc['2022-5-24'] = df['2022-5-17'].values
+        
+        
+        if self.remove_days == 'weekends':
+            df = df[df.index.weekday < 5 ] 
+        elif self.remove_days == 'weekdays':
+            df = df[df.index.weekday >= 5 ]
+
+        df = self.emd_sift(df)
+                                                                
+        #df['Day'] = df.index.dayofyear
+        #df['Hour'] = df.index.hour
+        #df['Weekday'] = df.index.dayofweek
+        
+        df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
+        
+        df = df.fillna(method='bfill')
+        
+        #df = df[:'2022-08']
+
+        return df[features]
+    
+
+    """
+    Generator function for creating random batches of training-data.
+    """
+    def train_batch_generator(self, batch_size, L_sequence_in, L_sequence_out, n_x_signals, n_y_signals, n, x, y):
+            
+            # Infinite loop.
+            while True:
+                    # Allocate a new array for the batch of input-signals.
+                    x_shape = (batch_size, L_sequence_in, n_x_signals)
+                    x_batch = np.zeros(shape=x_shape, dtype=np.float16)
+
+                    # Allocate a new array for the batch of output-signals.
+                    y_shape = (batch_size, L_sequence_out, n_y_signals)
+                    y_batch = np.zeros(shape=y_shape, dtype=np.float16)
+
+                    # Fill the batch with random sequences of data.
+                    for i in range(batch_size):
+                            # Get a random start-index.
+                            # This points somewhere into the training-data.
+                            idx = np.random.randint(n - L_sequence_in - L_sequence_out)
+                            
+                            # Copy the sequences of data starting at this index.
+                            x_batch[i] = x[idx:idx+L_sequence_in]
+                            y_batch[i] = y[idx:idx+L_sequence_out]
+                    
+                    yield (x_batch, y_batch)
+
+    
+    def organize_dat_v4(self, df, L_sequence_in, L_sequence_out, train_split, batch_size):#shift_steps=96, sequence_length=96*7*2):
+
+        # scalers
+        x_scaler = MinMaxScaler()
+        y_scaler = MinMaxScaler()
+        
+        # shift for forecast
+        #shift_steps = 1 * 24 * 4    # Number of time steps
+        df_targets = df['Load (kW)'].shift(-1*L_sequence_in)
+        
+        # scale and adjust the length
+        
+        x_data = x_scaler.fit_transform(df.values)[0:-1*L_sequence_in]
+        y_data = y_scaler.fit_transform(df_targets.values[:-1*L_sequence_in,np.newaxis])
+        #y_data = np.expand_dims(y_data,axis=1)
+        
+        
+        dump(x_scaler, open(self.models_dir + "x_scaler.pkl", 'wb'))
+        dump(y_scaler, open(self.models_dir + "y_scaler.pkl", 'wb'))
+
+        num_data = len(x_data)
+        num_train = int(train_split * num_data)
+        num_test = num_data - num_train
+
+        x_train = x_data[0:num_train]
+        x_test = x_data[num_train:]
+        len(x_train) + len(x_test)
+
+        y_train = y_data[0:num_train]
+        y_test = y_data[num_train:]
+        len(y_train) + len(y_test)
+
+        num_x_signals = x_data.shape[1]
+        num_y_signals = y_data.shape[1]
+
+        generator = self.train_batch_generator( batch_size,
+                                                L_sequence_in,
+                                                L_sequence_in, # note! this is not a typo
+                                                num_x_signals,
+                                                num_y_signals,
+                                                num_train,
+                                                x_train,
+                                                y_train)
+        
+        #x_batch, y_batch = next(generator)
+
+        test_data = ( np.expand_dims(x_test, axis=0),np.expand_dims(y_test, axis=0))
+        
+        return (num_x_signals, num_y_signals, generator, test_data, y_scaler)
+    
+    def organize_dat_test(self, df):
+    
+        x_scaler = load(open(self.models_dir + "x_scaler.pkl", 'rb'))
+        
+        x_test = x_scaler.transform(df.values)
+
+        return np.expand_dims(x_test, axis=0)
+    
+    def train_lstm_v4(  self, n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
+                        generator, validation_data, units:list, epochs:int, 
+                        layers:int=1, patience:int=5, verbose:int=1,dropout:list=None,
+                        afuncs={'lstm':'relu','dense':'sigmoid'},
+                        loss='mse',):
+        
+        model = Sequential()
+        # model.add( LSTM(    units,
+        #                                     return_sequences=True,
+        #                                     input_shape=(None, num_x_signals,)))
+        model.add( LSTM(units[0],
+                        return_sequences=True,
+                        input_shape=(None, n_features_x,),
+                        activation=afuncs['lstm']) )
+        if dropout is not None:
+            model.add(Dropout(dropout[0]))
+        if (layers == 2) and (len(units)>1):
+            # model.add( LSTM(    units,
+            #                                     return_sequences=True) ) 
+            model.add( LSTM( units[1],
+                            return_sequences=True,
+                            activation=afuncs['lstm']) ) 
+            if dropout is not None:
+                model.add(Dropout(dropout[1]))
+            
+        model.add( Dense( 1,activation='sigmoid') )    
+
+        model.compile(loss=loss, optimizer='adam')
+        model.summary()                                    
+        
+        callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
+                                                monitor='val_loss',
+                                                verbose=verbose,
+                                                #save_weights_only=True,
+                                                save_best_only=True)
+        
+        callback_early_stopping = EarlyStopping(    monitor='val_loss',
+                                                    patience=patience,
+                                                    verbose=verbose,
+                                                    restore_best_weights=True)
+        
+        callback_tensorboard = TensorBoard( log_dir='./logs/',
+                                            histogram_freq=0,
+                                            write_graph=False)
+        
+        # callback_reduce_lr = ReduceLROnPlateau(monitor='val_loss',
+        #                                                                         factor=0.1,
+        #                                                                         min_lr=1e-4,
+        #                                                                         patience=0,
+        #                                                                         verbose=verbose)
+        
+        callbacks = [ callback_early_stopping,
+                    callback_checkpoint,
+                    callback_tensorboard,]
+                    #callback_reduce_lr]
+
+        hx = model.fit( x=generator,
+                        epochs=epochs,
+                        steps_per_epoch=100,
+                        validation_data=validation_data,
+                        callbacks=callbacks,
+                        verbose=verbose)        
+
+        return model, hx  
+    
     
     def plot_training_history(self,hx):
         hx_loss = hx.history['loss']
@@ -1640,60 +1716,57 @@ class RunTheJoules:
         plt.legend(['Train Set Loss','Test Set Loss'])
         plt.ylabel('MSE (scaled data) [kW/kW]')
         plt.xlabel('Training Epoch')
-        plt.title('Training History')
-        
-    def plot_predictions(self, y_true, y_pred, offset_days=0, period_days=7):
+        plt.title('Training History')     
+        plt.show()
+    
+    
+    def plot_predictions_week(self,y_true, y_pred, week=0, ppd=96, persist_days=7):
 
-        Loffset = self.data_points_per_day*offset_days
-        Lperiod = self.data_points_per_day*period_days # points per week, points per day
-        Lpersist = self.persist_lag # persistence lag (points per persistence)
-        t = np.arange(Lperiod)
+        ppw = ppd*7 # points per week, points per day
+        ppp = persist_days *ppd
+        t = np.arange(ppw)
 
-        y_true_period = y_true[Loffset+Lpersist :    Loffset+Lpersist+Lperiod    ]
-        y_pers_period = y_true[Loffset          :    Loffset+Lperiod             ]
-        y_pred_period = y_pred[Loffset+Lpersist :    Loffset+Lpersist+Lperiod    ]
+        y_true_wk = y_true[(week+1)*ppw     :(week+2)*ppw    ]
+        y_np1w_wk = y_true[(week+1)*ppw-ppp :(week+2)*ppw-ppp]
+        y_pred_wk = y_pred[(week+1)*ppw     :(week+2)*ppw    ]
 
-        rmse_pers = np.sqrt(np.mean(np.square(y_pers_period - y_true_period)))
-        rmse_pred = np.sqrt(np.mean(np.square(y_pred_period - y_true_period)))
-        skill = (rmse_pers - rmse_pred)/rmse_pers
+        rmse_np1w = np.sqrt(np.mean(np.square(y_np1w_wk - y_true_wk)))
+        rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
+        skill = (rmse_np1w - rmse_pred)/rmse_np1w
 
         plt.figure(figsize=(20,6))
-        plt.plot(   t,y_true_period,
-                    t,y_pers_period,
-                    t,y_pred_period)
+        plt.plot( t,y_true_wk,
+                            t,y_np1w_wk,
+                            t,y_pred_wk)
         
-        plt.legend(['true',
-                    f'persist (rmse {rmse_pers:.0f})', 
-                    f'predict (rmse {rmse_pred:.0f})'])
+        plt.legend([    'true',
+                                    f'np 1 wk (rmse {rmse_np1w:.0f})', 
+                                    f'predict (rmse {rmse_pred:.0f})'])
         
-        plt.title(f'test period skill {skill:.2})')
+        plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
+                            f'(skill {skill:.2})')
         plt.show()
         
-    def plot_one_prediction(self, begin=0):
         
-        y_pred = self.model.predict(self.x_test[:,begin:begin+self.n_in,:])
+    def plot_one_prediction(self,model,x_test,y_test,n_in,n_out,begin=0):
         
-        t_in = np.arange(self.n_in)
-        t_out = np.arange(self.n_in,self.n_in+self.n_out)
+        y_pred = model.predict(x_test[:,begin:begin+n_in,:])
         
-        plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,0],label='x test f0')
-        plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,1],label='x test f1')
-        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,2],label='x test f2')
-        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,3],label='x test f3')
-        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,4],label='x test f4')
-        #plt.plot(t_in,self.x_test[0,begin:begin+self.n_in,5],label='x test f5')
-        plt.plot(t_out,self.y_test[0,begin:begin+self.n_out,0],label='y test')
-        plt.plot(t_out,y_pred[0,:self.n_out,0],'--',label='y pred')
+        t_in = np.arange(n_in)
+        t_out = np.arange(n_in,n_in+n_out)
+        
+        for z in range(x_test.shape[2]):
+            plt.plot(t_in,x_test[0,begin:begin+n_in,z],label=f'x test f{z}')
+        plt.plot(t_out,y_test[0,begin:begin+n_out,0],label='y test')
+        plt.plot(t_out,y_pred[0,:n_out,0],'--',label='y pred')
         plt.legend()
         plt.show() 
+    
             
     def run_them_fast(self,features,units,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
-                      output=False,plots=False):
-        
-        self.n_in = n_in
-        self.n_out = n_out
-        
+                      output=False,plots=False,train_split=0.9,batch_size=256):
         layers = len(units)
+        
         
         df = self.df[features]
         
@@ -1702,30 +1775,33 @@ class RunTheJoules:
         for u in units:
             units_str += (str(u)+' ')
         
-        print(f'\n\n////////// lstm u{units[0]}-{units[1]}d{dropout}n{self.n_in} //////////\n')
+        print(f'\n\n////////// units={units_str} layers={layers} //////////\n')
 
+        # meta
         y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
-        path_checkpoint = self.models_dir+ f'{self.site} lstm {units_str} {y}{m}{d}.keras'
+        path_checkpoint = self.models_dir+ f'lstm.keras'
                 
         ( n_features_x, n_features_y, 
             batchgen, dat_valid, 
-            scaler) = organize_dat_v4( df, self.n_in, self.n_out)
+            scaler) = self.organize_dat_v4( df, n_in, n_out, train_split, batch_size)
 
-        (self.x_test, self.y_test) = dat_valid 
+        (x_test, y_test) = dat_valid 
 
-        #y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],horizon=self.persist_lag)
+        # np
+        y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],horizon=self.persist_lag)
 
-        self.model, hx = train_lstm_v4(  n_features_x, self.n_in, self.n_out, 
+        # model                                                
+        self.model, hx = self.train_lstm_v4(  n_features_x, n_in, n_out, 
                                     path_checkpoint, batchgen, 
                                     dat_valid, units, epochs,
                                     layers, patience, 
                                     verbose, dropout)
                                                                 
         # evaluate
-        y_test_predict = self.model.predict(self.x_test)
+        y_test_predict = self.model.predict(x_test)
 
         y_test_pred_kw = scaler.inverse_transform(y_test_predict[:,:,0]).flatten()
-        y_test_kw            = scaler.inverse_transform(self.y_test[:,:,0]).flatten()
+        y_test_kw            = scaler.inverse_transform(y_test[:,:,0]).flatten()
 
         test_rmse_np = rmse(    y_test_kw[self.persist_lag:], 
                                 y_test_kw[:-(self.persist_lag )] )
@@ -1745,31 +1821,63 @@ class RunTheJoules:
         # plot
         if plots:
             self.plot_training_history(hx)
-            self.plot_predictions(y_test_kw, y_test_pred_kw, period_days=2*len(self.days_of_week))
-            self.plot_one_prediction()
+            self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=0)
+            self.plot_one_prediction(self.model,x_test,y_test,n_in,n_out)
 
         return results, hx.history
+    
+    def banana_clipper(self,t_now,plot=False):
+        df = self.get_dat_test( r'/home/mjw/OneDrive/Data/Load/Vehicle/ACN/test_JPL_v2.csv',
+                                features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)])
+        
+        x = df[:t_now-pd.Timedelta('15min')][-96:].copy()
+        y = df[['Load (kW)']][t_now:][:96].copy()
+        
+        # print('\n\n\nx',x, len(x),'\n\n\n')
+        # print('\n\n\ny',y, len(y),'\n\n\n')
+        
+        x_test = self.organize_dat_test(x)
+        
+        y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
+        
+        model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
+        
+        y_pred = model.predict(x_test[:,-96:,:])
+        
+        y_pred_kw = y_scaler.inverse_transform(y_pred[:,:,0]).flatten()
+        
+        if plot:
+            plt.figure(figsize=(10,5))
+            plt.plot(df['Load (kW)'][:t_now-pd.Timedelta('15min')][-96:],label='x load')
+            plt.plot(df['Persist'][:t_now-pd.Timedelta('15min')][-96:],label='x persist')
+            plt.plot(y,label='y true')
+            plt.plot(y.index,y_pred_kw.flatten(),label='y pred')
+            plt.legend()
+            plt.show()
             
 if __name__ == '__main__':
 
-    wd = RunTheJoules( 'acn-jpl',
+    jpl = RunTheJoules( 'acn-jpl',
                         models_dir='./models/acn-jpl/',
                         #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
                         filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/train_JPL_v2.csv',
-                        plot_overlaid_days=False,
-                        persist_days=7,
-                        days_of_week=[0,1,2,3,4,5,6])
+                        remove_days='weekends',
+                        )
 
-    results, history = wd.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units=[12,12],
-                                        dropout=2*[0],
+    #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
+
+    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+                                        units=[48,512],
+                                        dropout=2*[0.2],
                                         n_in=96,
                                         n_out=96,
-                                        epochs=5,
+                                        epochs=100,
                                         patience=15,
                                         plots=True,
                                         output=True,
                                         verbose=1)
+    
+    jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
     
     # rx = {}
     # hx = {}
