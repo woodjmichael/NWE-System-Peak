@@ -1486,12 +1486,12 @@ class RunTheJoules:
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
         df = df.resample('15min').mean()
         #df = df.tz_convert(None)
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        df = df.ffill().bfill()
         
-        df.loc['2020-12-8'] = df['2020-12-1'].values
-        df.loc['2020-11-26'] = df['2020-11-19'].values
+        #df.loc['2020-12-8'] = df['2020-12-1'].values
+        #df.loc['2020-11-26'] = df['2020-11-19'].values
         #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
-        df.loc['2022-5-24'] = df['2022-5-17'].values
+        #df.loc['2022-5-24'] = df['2022-5-17'].values
         
         
         if self.remove_days == 'weekends':
@@ -1507,9 +1507,9 @@ class RunTheJoules:
         
         df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
         
-        df = df.fillna(method='bfill')
+        df = df.bfill()
         
-        df = df[:'2022-08']
+        #df = df[:'2022-08']
 
         return df
     
@@ -1713,7 +1713,7 @@ class RunTheJoules:
 
         plt.figure(figsize=(10,6))
         plt.plot(t,hx_loss,t,hx_val_loss)
-        plt.legend(['Train Set Loss','Test Set Loss'])
+        plt.legend(['Train Set Loss','Validation Set Loss'])
         plt.ylabel('MSE (scaled data) [kW/kW]')
         plt.xlabel('Training Epoch')
         plt.title('Training History')     
@@ -1857,27 +1857,26 @@ class RunTheJoules:
             
 if __name__ == '__main__':
 
-    jpl = RunTheJoules( 'acn-jpl',
-                        models_dir='./models/acn-jpl/',
-                        #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
-                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/train_JPL_v2.csv',
-                        remove_days='weekends',
-                        )
+    jpl = RunTheJoules('acn-jpl',
+                    data_col=2,
+                    models_dir='./models/acn-jpl/',
+                    filename='C:/Users/woodj/OneDrive - Politecnico di Milano/Microgrid MG2Lab/Dataset/JPL_v4/all_JPL_v4.csv',
+                    remove_days='weekends')
 
     #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
 
-    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units=[48,512],
-                                        dropout=2*[0.2],
-                                        n_in=96,
-                                        n_out=96,
-                                        epochs=100,
-                                        patience=15,
-                                        plots=True,
-                                        output=True,
-                                        verbose=1)
+    results, history = jpl.run_them_fast(   features=['Load (kW)'],#,'Persist'] + [f'IMF{x}' for x in range(3,7)],
+                                            units=[1,1],
+                                            dropout=[0,0],
+                                            n_in=288,
+                                            n_out=96,
+                                            epochs=10,
+                                            patience=10,
+                                            plots=True,
+                                            output=True,
+                                            verbose=2,)
     
-    jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
+    #jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
     
     # rx = {}
     # hx = {}
