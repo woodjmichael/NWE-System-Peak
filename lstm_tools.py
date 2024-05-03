@@ -25,7 +25,7 @@ from tensorflow.keras.backend import square, mean
 import emd #install using pip
 
 # pd.options.plotting.backend = "plotly"
-# pd.set_option('precision', 2)
+# pd.set_option('precision', 2)        
 
 def config(plot_theme,seed,precision):
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -1446,24 +1446,41 @@ class RunTheJoules:
     def __init__(self,
                 site,                                         
                 filename,
+                index_col,
+                data_col,
                 models_dir='./models/',
-                data_points_per_day = 96,
-                persist_days = 1,
-                data_col = 1,
-                resample='15min',
-                remove_days=False,):
+                persist_days = 7,
+                resample=False,
+                remove_days=False,
+                subset='all',
+                calendar_features=False):
         self.site = site
-        self.data_points_per_day = data_points_per_day
         self.persist_days = persist_days
-        self.persist_lag = data_points_per_day * persist_days
+        self.data_points_per_day = None
+        self.persist_lag = None
         self.models_dir = models_dir
         self.filename = filename
+        self.index_col = index_col
         self.data_col = data_col
         self.resample = resample
-        self.remove_days=remove_days
-        self.df = self.get_dat()
+        self.remove_days=remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
+        self.subset = subset
+        self.calendar_features = calendar_features
         self.model = None
+        self.df = self.get_dat()
         
+        
+    def min_max_scaler(self,df:pd.DataFrame):
+        xmins,xmaxs = [],[]
+        for col in df.columns:
+            xmin = df[col].minx()
+            xmax = df[col].max()
+            df[col] = (df[col] - xmin)/(xmax-xmin)
+            xmins.append(xmin)
+            xmaxs.append(xmax)
+            self.scalers = pd.DataFrame({'xmin':xmins,'xmax':xmax}).T
+            self.scalers
+        return df
         
     def emd_sift(self, df):
         imf = emd.sift.sift(df['Load (kW)'].values)
@@ -1475,83 +1492,105 @@ class RunTheJoules:
         
         
     def get_dat(self):
-        df = pd.read_csv(   self.filename,     
+        usecols = [self.index_col,self.data_col]
+        
+        if self.subset != 'all':
+            usecols += ['subset']
+        
+        df = pd.read_csv(self.filename,     
                             comment='#',
                             parse_dates=True,
-                            index_col=0,
-                            usecols=[0,self.data_col] )
+                            index_col=usecols[0],
+                            usecols=usecols )
+        
+        interval_min = int(df.index.to_series().diff().mode()[0].seconds/60)
+        self.data_points_per_day = int(1440/interval_min)
+        self.persist_lag = self.persist_days * self.data_points_per_day
+        
+        df = df[df['subset']==self.subset] # e.g. train or test
+        
+        df = df.drop(columns=['subset'])
 
         df.columns = ['Load (kW)']
+        df['weekday'] = df.index.weekday
+        
+        
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
-        df = df.resample('15min').mean()
+
         #df = df.tz_convert(None)
-        df = df.fillna(method='ffill').fillna(method='bfill')
+        df = df.ffill().bfill()
         
-        df.loc['2020-12-8'] = df['2020-12-1'].values
-        df.loc['2020-11-26'] = df['2020-11-19'].values
-        #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
-        df.loc['2022-5-24'] = df['2022-5-17'].values
+        
+        if self.resample != False:
+            df = df.resample(self.resample).mean()
         
         
         if self.remove_days == 'weekends':
             df = df[df.index.weekday < 5 ] 
         elif self.remove_days == 'weekdays':
             df = df[df.index.weekday >= 5 ]
+        elif isinstance(self.remove_days,list):
+            for day in self.remove_days:
+                df = df[df.index.weekday != day]
 
         df = self.emd_sift(df)
-                                                                
-        #df['Day'] = df.index.dayofyear
-        #df['Hour'] = df.index.hour
-        #df['Weekday'] = df.index.dayofweek
+                            
+        if self.calendar_features:
+            df['Day'] = df.index.dayofyear
+            df['Hour'] = df.index.hour
+            df['Weekday'] = df.index.dayofweek
         
         df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
-        
-        df = df.fillna(method='bfill')
-        
-        df = df[:'2022-08']
+    
+        df = df.ffill().bfill()
 
         return df
     
     
     def get_dat_test(self,filename,features):
-        df = pd.read_csv(   filename,     
-                            comment='#',
-                            parse_dates=True,
-                            index_col=0,
-                            usecols=[0,self.data_col],)
+        print('///// get_dat_test() deprecated ////')
+        quit()
+        if 0:
+            df = pd.read_csv(   filename,     
+                                comment='#',
+                                parse_dates=True,
+                                index_col=0,
+                                usecols=[0,self.data_col],)
 
-        df.columns = ['Load (kW)']
+            df.columns = ['Load (kW)']
 
-        #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
-        df = df.resample('15min').mean()
-        #df = df.tz_convert(None)
-        df = df.fillna(method='ffill').fillna(method='bfill')
-        
-        # df.loc['2020-12-8'] = df['2020-12-1'].values
-        # df.loc['2020-11-26'] = df['2020-11-19'].values
-        # #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
-        # df.loc['2022-5-24'] = df['2022-5-17'].values
-        
-        
-        if self.remove_days == 'weekends':
-            df = df[df.index.weekday < 5 ] 
-        elif self.remove_days == 'weekdays':
-            df = df[df.index.weekday >= 5 ]
+            #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
+            df = df.resample('15min').mean()
+            #df = df.tz_convert(None)
+            df = df.fillna(method='ffill').fillna(method='bfill')
+            
+            # df.loc['2020-12-8'] = df['2020-12-1'].values
+            # df.loc['2020-11-26'] = df['2020-11-19'].values
+            # #df.loc['2021-10-11':'2021-10-15'] = df['2021-10-17':'2021-10-'].values
+            # df.loc['2022-5-24'] = df['2022-5-17'].values
+            
+            
+            if self.remove_days == 'weekends':
+                df = df[df.index.weekday < 5 ] 
+            elif self.remove_days == 'weekdays':
+                df = df[df.index.weekday >= 5 ]
+            elif isinstance(self.remove_days,list):
+                for day in self.remove_days:
+                    df = df[df.index.weekday != day]
 
-        df = self.emd_sift(df)
-                                                                
-        #df['Day'] = df.index.dayofyear
-        #df['Hour'] = df.index.hour
-        #df['Weekday'] = df.index.dayofweek
-        
-        df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
-        
-        df = df.fillna(method='bfill')
-        
-        #df = df[:'2022-08']
+            df = self.emd_sift(df)
+                                    
+            if self.calendar_features:                               
+                df['Day'] = df.index.dayofyear
+                df['Hour'] = df.index.hour
+                df['Weekday'] = df.index.dayofweek
+            
+            df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
+            
+            df = df.ffill().bfill()
 
-        return df[features]
+            return df[features]
     
 
     """
@@ -1640,32 +1679,32 @@ class RunTheJoules:
 
         return np.expand_dims(x_test, axis=0)
     
-    def train_lstm_v4(  self, n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
-                        generator, validation_data, units:list, epochs:int, 
-                        layers:int=1, patience:int=5, verbose:int=1,dropout:list=None,
+    def train_lstm_v5(  self, n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
+                        generator, validation_data, units_layers:list, epochs:int, 
+                        patience:int=5, verbose:int=1,dropout:list=None,
                         afuncs={'lstm':'relu','dense':'sigmoid'},
                         loss='mse',):
         
         model = Sequential()
-        # model.add( LSTM(    units,
-        #                                     return_sequences=True,
-        #                                     input_shape=(None, num_x_signals,)))
-        model.add( LSTM(units[0],
+        
+        model.add( LSTM(units_layers[0],
                         return_sequences=True,
                         input_shape=(None, n_features_x,),
                         activation=afuncs['lstm']) )
+        
         if dropout is not None:
             model.add(Dropout(dropout[0]))
-        if (layers == 2) and (len(units)>1):
-            # model.add( LSTM(    units,
-            #                                     return_sequences=True) ) 
-            model.add( LSTM( units[1],
+        
+        if len(units_layers)>1:
+        
+            model.add( LSTM( units_layers[1],
                             return_sequences=True,
                             activation=afuncs['lstm']) ) 
+            
             if dropout is not None:
                 model.add(Dropout(dropout[1]))
             
-        model.add( Dense( 1,activation='sigmoid') )    
+        model.add( Dense( n_out, activation='sigmoid') )    
 
         model.compile(loss=loss, optimizer='adam')
         model.summary()                                    
@@ -1718,12 +1757,38 @@ class RunTheJoules:
         plt.xlabel('Training Epoch')
         plt.title('Training History')     
         plt.show()
-    
-    
-    def plot_predictions_week(self,y_true, y_pred, week=0, ppd=96, persist_days=7):
 
-        ppw = ppd*7 # points per week, points per day
-        ppp = persist_days *ppd
+    def plot_predictions_day(self,y_true, y_pred, day=0):
+        ppd = self.data_points_per_day
+        #ppw = ppd*7 # points per week
+        ppp = self.persist_days *ppd
+        t = np.arange(ppd)
+
+        y_true_wk = y_true[(day+1)*ppd     :(day+2)*ppd    ]
+        y_pers_wk = y_true[(day+1)*ppd-ppp :(day+2)*ppd-ppp]
+        y_pred_wk = y_pred[(day+1)*ppd     :(day+2)*ppd    ]
+
+        rmse_pers = np.sqrt(np.mean(np.square(y_pers_wk - y_true_wk)))
+        rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
+        skill = (rmse_pers - rmse_pred)/rmse_pers
+
+        plt.figure(figsize=(8,6))
+        plt.plot( t,y_true_wk,
+                            t,y_pers_wk,
+                            t,y_pred_wk)
+        
+        plt.legend([    'true',
+                                    f'persist {self.persist_days}d (rmse {rmse_pers:.0f})', 
+                                    f'predict (rmse {rmse_pred:.0f})'])
+        
+        plt.title(f'test set week {day+1} of {int(len(y_true)/ppd)} '
+                            f'(skill {skill:.2})')
+        plt.show()    
+    
+    def plot_predictions_week(self,y_true, y_pred, week=0):
+        ppd = self.data_points_per_day
+        ppw = ppd*7 # points per week
+        ppp = self.persist_days *ppd
         t = np.arange(ppw)
 
         y_true_wk = y_true[(week+1)*ppw     :(week+2)*ppw    ]
@@ -1740,7 +1805,7 @@ class RunTheJoules:
                             t,y_pred_wk)
         
         plt.legend([    'true',
-                                    f'np 1 wk (rmse {rmse_np1w:.0f})', 
+                                    f'persist {self.persist_days}d (rmse {rmse_np1w:.0f})', 
                                     f'predict (rmse {rmse_pred:.0f})'])
         
         plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
@@ -1763,9 +1828,10 @@ class RunTheJoules:
         plt.show() 
     
             
-    def run_them_fast(self,features,units,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
+    def run_them_fast(self,features,units_layers,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
                       output=False,plots=False,train_split=0.9,batch_size=256):
-        layers = len(units)
+        units = units_layers
+        layers = len(units_layers)
         
         
         df = self.df[features]
@@ -1785,23 +1851,22 @@ class RunTheJoules:
             batchgen, dat_valid, 
             scaler) = self.organize_dat_v4( df, n_in, n_out, train_split, batch_size)
 
-        (x_test, y_test) = dat_valid 
+        (x_valid, y_valid) = dat_valid 
 
         # np
-        y_test_naive_mse = naive_forecast_mse( y_test[0,:,0],horizon=self.persist_lag)
+        y_test_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
 
         # model                                                
-        self.model, hx = self.train_lstm_v4(  n_features_x, n_in, n_out, 
+        self.model, hx = self.train_lstm_v5(  n_features_x, n_in, n_out, 
                                     path_checkpoint, batchgen, 
-                                    dat_valid, units, epochs,
-                                    layers, patience, 
-                                    verbose, dropout)
+                                    dat_valid, units_layers, epochs,
+                                    patience, verbose, dropout)
                                                                 
         # evaluate
-        y_test_predict = self.model.predict(x_test)
+        y_test_predict = self.model.predict(x_valid)
 
         y_test_pred_kw = scaler.inverse_transform(y_test_predict[:,:,0]).flatten()
-        y_test_kw            = scaler.inverse_transform(y_test[:,:,0]).flatten()
+        y_test_kw            = scaler.inverse_transform(y_valid[:,:,0]).flatten()
 
         test_rmse_np = rmse(    y_test_kw[self.persist_lag:], 
                                 y_test_kw[:-(self.persist_lag )] )
@@ -1821,8 +1886,12 @@ class RunTheJoules:
         # plot
         if plots:
             self.plot_training_history(hx)
-            self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=0)
-            self.plot_one_prediction(self.model,x_test,y_test,n_in,n_out)
+            for day in range(7):
+                self.plot_predictions_day(y_test_kw, y_test_pred_kw, day=day)
+            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=1)
+            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=2)
+            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=3)
+            #self.plot_one_prediction(self.model,x_test,y_test,n_in,n_out)
 
         return results, hx.history
     
@@ -1860,24 +1929,29 @@ if __name__ == '__main__':
     jpl = RunTheJoules( 'acn-jpl',
                         models_dir='./models/acn-jpl/',
                         #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
-                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/train_JPL_v2.csv',
-                        remove_days='weekends',
+                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
+                        index_col='times_utc-8',
+                        data_col='power',
+                        subset='train',
+                        remove_days=[4,5,6],
+                        persist_days=1,
+                        resample='15min'
                         )
 
     #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
 
     results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units=[48,512],
-                                        dropout=2*[0.2],
+                                        units_layers=[24,24],
+                                        dropout=[0.0,0.0],
                                         n_in=96,
                                         n_out=96,
                                         epochs=100,
-                                        patience=15,
+                                        patience=10,
                                         plots=True,
                                         output=True,
-                                        verbose=1)
+                                        verbose=1,)
     
-    jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
+    #jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
     
     # rx = {}
     # hx = {}
