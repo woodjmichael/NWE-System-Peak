@@ -1452,7 +1452,7 @@ class RunTheJoules:
                 persist_days = 7,
                 resample=False,
                 remove_days=False,
-                subset='all',
+                subset=False,
                 calendar_features=False):
         self.site = site
         self.persist_days = persist_days
@@ -1494,7 +1494,7 @@ class RunTheJoules:
     def get_dat(self):
         usecols = [self.index_col,self.data_col]
         
-        if self.subset != 'all':
+        if self.subset != False:
             usecols += ['subset']
         
         df = pd.read_csv(self.filename,     
@@ -1507,9 +1507,9 @@ class RunTheJoules:
         self.data_points_per_day = int(1440/interval_min)
         self.persist_lag = self.persist_days * self.data_points_per_day
         
-        df = df[df['subset']==self.subset] # e.g. train or test
-        
-        df = df.drop(columns=['subset'])
+        if self.subset != False:
+            df = df[df['subset']==self.subset] # e.g. train or test
+            df = df.drop(columns=['subset'])
 
         df.columns = ['Load (kW)']
         df['weekday'] = df.index.weekday
@@ -1758,15 +1758,17 @@ class RunTheJoules:
         plt.title('Training History')     
         plt.show()
 
-    def plot_predictions_day(self,y_true, y_pred, day=0):
+    def plot_predictions_day(self,y_true, y_pred, y_pers_wk=None, day=0):
         ppd = self.data_points_per_day
         #ppw = ppd*7 # points per week
         ppp = self.persist_days *ppd
         t = np.arange(ppd)
 
         y_true_wk = y_true[(day+1)*ppd     :(day+2)*ppd    ]
-        y_pers_wk = y_true[(day+1)*ppd-ppp :(day+2)*ppd-ppp]
         y_pred_wk = y_pred[(day+1)*ppd     :(day+2)*ppd    ]
+        
+        if y_pers_wk is None:
+            y_pers_wk = y_true[(day+1)*ppd-ppp :(day+2)*ppd-ppp]
 
         rmse_pers = np.sqrt(np.mean(np.square(y_pers_wk - y_true_wk)))
         rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
@@ -1895,44 +1897,65 @@ class RunTheJoules:
 
         return results, hx.history
     
-    def banana_clipper(self,t_now,plot=False):
-        df = self.get_dat_test( r'/home/mjw/OneDrive/Data/Load/Vehicle/ACN/test_JPL_v2.csv',
-                                features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)])
+    def banana_clipper(self,t_begin,features,n_in,n_out,t_end=None,freq=None,output=False,plots=False):   
         
-        x = df[:t_now-pd.Timedelta('15min')][-96:].copy()
-        y = df[['Load (kW)']][t_now:][:96].copy()
+        daily_skills = []
+       
+        df = self.df[features]
         
-        # print('\n\n\nx',x, len(x),'\n\n\n')
-        # print('\n\n\ny',y, len(y),'\n\n\n')
-        
-        x_test = self.organize_dat_test(x)
-        
-        y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
-        
-        model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
-        
-        y_pred = model.predict(x_test[:,-96:,:])
-        
-        y_pred_kw = y_scaler.inverse_transform(y_pred[:,:,0]).flatten()
-        
-        if plot:
-            plt.figure(figsize=(10,5))
-            plt.plot(df['Load (kW)'][:t_now-pd.Timedelta('15min')][-96:],label='x load')
-            plt.plot(df['Persist'][:t_now-pd.Timedelta('15min')][-96:],label='x persist')
-            plt.plot(y,label='y true')
-            plt.plot(y.index,y_pred_kw.flatten(),label='y pred')
-            plt.legend()
-            plt.show()
+        for t in pd.date_range(t_begin,t_end,freq=freq):
+
+            x = df[:t-pd.Timedelta('15min')][-1*n_in:].copy()
+            
+            y_true = df.loc[t:,'Load (kW)'][:n_out].copy()
+            y_pers = df.loc[t:,'Persist'][:n_out].copy()
+            
+            rmse_pers = ((y_true-y_pers)**2).mean()**0.5
+            
+            if rmse_pers < 0.001:
+                print ('\nPersistence == perfect')
+            elif t != y_true.index[0]:
+                print ('\nWeekday doesnt exist in training data')
+            else:
+                x_test = self.organize_dat_test(x)
+                y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
+                
+                model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
+                
+                y_pred = model.predict(x_test[:,-1*n_in:,:])
+                
+                y_pred_kw = y_scaler.inverse_transform(y_pred[:,:,0]).flatten()
+                
+                y_pred = pd.Series(y_pred_kw,index=y_true.index,name='Load (kW)')
+                
+                rmse_pred = ((y_true-y_pred)**2).mean()**0.5        
+                skill_rmse = 1 - rmse_pred/rmse_pers
+                daily_skills.append(skill_rmse)
+                
+                if plots:
+                    title = f'Skill {skill_rmse:.3f}'
+                    dfplt = pd.DataFrame({'True':y_true.values.flatten(),
+                                        'Pred':y_pred.values.flatten(),
+                                        'Pers':y_pers.values.flatten()},
+                                        index=y_true.index)
+                    dfplt.plot(title=title)
+                    plt.show()
+                
+        daily_skills = np.array(daily_skills)
+        print('Percentage of days with positive skill:',
+              f'{100*len(daily_skills[daily_skills>0])/len(daily_skills):.0f}%')
+        print(f'Average skill: {100*daily_skills.mean():.1f}%')
             
 if __name__ == '__main__':
 
     jpl = RunTheJoules( 'acn-jpl',
-                        models_dir='./models/acn-jpl/',
+                        models_dir='models/acn-jpl-u24x2-days0123/',
                         #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
                         filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
                         index_col='times_utc-8',
                         data_col='power',
-                        subset='train',
+                        #subset='train',
+                        subset='test',
                         remove_days=[4,5,6],
                         persist_days=1,
                         resample='15min'
@@ -1940,18 +1963,25 @@ if __name__ == '__main__':
 
     #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
 
-    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units_layers=[24,24],
-                                        dropout=[0.0,0.0],
-                                        n_in=96,
-                                        n_out=96,
-                                        epochs=100,
-                                        patience=10,
-                                        plots=True,
-                                        output=True,
-                                        verbose=1,)
+    # results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+    #                                     units_layers=[24,24],
+    #                                     dropout=[0.0,0.0],
+    #                                     n_in=96,
+    #                                     n_out=96,
+    #                                     epochs=100,
+    #                                     patience=10,
+    #                                     plots=True,
+    #                                     output=True,
+    #                                     verbose=1,)
     
-    #jpl.banana_clipper(pd.Timestamp('2023-10-2 0:15'),plot=True)
+    jpl.banana_clipper(jpl.df.index[4*96],
+                       #t_end=jpl.df.index[10*96],
+                        t_end=jpl.df.index[-96],
+                        freq='1h',
+                        features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+                        n_in=96,
+                        n_out=96,
+                        plots=False)
     
     # rx = {}
     # hx = {}
