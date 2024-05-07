@@ -1520,6 +1520,7 @@ class RunTheJoules:
 
         #df = df.tz_convert(None)
         df = df.ffill().bfill()
+        df = df.ffill().bfill()
         
         
         if self.resample != False:
@@ -1752,7 +1753,7 @@ class RunTheJoules:
 
         plt.figure(figsize=(10,6))
         plt.plot(t,hx_loss,t,hx_val_loss)
-        plt.legend(['Train Set Loss','Test Set Loss'])
+        plt.legend(['Train Set Loss','Validation Set Loss'])
         plt.ylabel('MSE (scaled data) [kW/kW]')
         plt.xlabel('Training Epoch')
         plt.title('Training History')     
