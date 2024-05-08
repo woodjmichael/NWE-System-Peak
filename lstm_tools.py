@@ -22,10 +22,19 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoa
                                                                                 ReduceLROnPlateau
 from tensorflow.keras.backend import square, mean
 
-import emd #install using pip
+import emd
 
-# pd.options.plotting.backend = "plotly"
-# pd.set_option('precision', 2)        
+class Custom_Loss_Prices(tf.keras.losses.Loss):
+    def __init__(self,**kwargs):
+        super().__init__(**kwargs)
+        self.prices = 7*[1]+5*[5]+12*[1] # 24 hourly "prices" [.1,.1,.1,.1... .3,.3,.3,.3,... 1,1,1] / 20
+        self.prices = [self.prices[i//4] for i in range(4*len(self.prices))] # 96 hourly prices
+        self.prices_tf = tf.constant(self.prices,dtype=tf.float32)
+    def call(self, y_true, y_pred):        
+        # elements = tf.multiply(x=self.prices_tf, y=tf.abs(y_true - y_pred))
+        # elements = y_true - y_pred # for mse
+        elements = tf.multiply(x=y_true, y=y_true - y_pred)
+        return tf.reduce_mean(tf.square(elements))
 
 def config(plot_theme,seed,precision):
         os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
@@ -1707,7 +1716,10 @@ class RunTheJoules:
             
         model.add( Dense( n_out, activation='sigmoid') )    
 
-        model.compile(loss=loss, optimizer='adam')
+        if loss == 'custom':
+            model.compile(loss=Custom_Loss_Prices(),optimizer='adam')
+        else:
+            model.compile(loss=loss, optimizer='adam')
         model.summary()                                    
         
         callback_checkpoint = ModelCheckpoint(  filepath=path_checkpoint,
@@ -1832,7 +1844,7 @@ class RunTheJoules:
     
             
     def run_them_fast(self,features,units_layers,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
-                      output=False,plots=False,train_split=0.9,batch_size=256):
+                      output=False,plots=False,train_split=0.9,batch_size=256,loss='mse'):
         units = units_layers
         layers = len(units_layers)
         
@@ -1863,7 +1875,7 @@ class RunTheJoules:
         self.model, hx = self.train_lstm_v5(  n_features_x, n_in, n_out, 
                                     path_checkpoint, batchgen, 
                                     dat_valid, units_layers, epochs,
-                                    patience, verbose, dropout)
+                                    patience, verbose, dropout,loss=loss)
                                                                 
         # evaluate
         y_test_predict = self.model.predict(x_valid)
@@ -1898,7 +1910,7 @@ class RunTheJoules:
 
         return results, hx.history
     
-    def banana_clipper(self,t_begin,features,n_in,n_out,t_end=None,freq=None,output=False,plots=False):   
+    def banana_clipper(self,t_begin,features,n_in,n_out,t_end=None,freq=None,output=False,plots=False,custom_loss=None):   
         
         daily_skills = []
        
@@ -1921,7 +1933,11 @@ class RunTheJoules:
                 x_test = self.organize_dat_test(x)
                 y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
                 
-                model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
+                if custom_loss is None:
+                    model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
+                else:
+                    model = tf.keras.models.load_model(self.models_dir+"lstm.keras",
+                                                    custom_objects={'Custom_Loss_Prices':Custom_Loss_Prices,})
                 
                 y_pred = model.predict(x_test[:,-1*n_in:,:])
                 
@@ -1950,13 +1966,13 @@ class RunTheJoules:
 if __name__ == '__main__':
 
     jpl = RunTheJoules( 'acn-jpl',
-                        models_dir='models/acn-jpl-u24x2-days0123/',
+                        models_dir='models/acn-jpl/',
                         #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
                         filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
                         index_col='times_utc-8',
                         data_col='power',
-                        #subset='train',
-                        subset='test',
+                        subset='train',
+                        #subset='test',
                         remove_days=[4,5,6],
                         persist_days=1,
                         resample='15min'
@@ -1964,25 +1980,26 @@ if __name__ == '__main__':
 
     #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
 
-    # results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-    #                                     units_layers=[24,24],
-    #                                     dropout=[0.0,0.0],
-    #                                     n_in=96,
-    #                                     n_out=96,
-    #                                     epochs=100,
-    #                                     patience=10,
-    #                                     plots=True,
-    #                                     output=True,
-    #                                     verbose=1,)
+    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
+                                        units_layers=[24,24],
+                                        dropout=[0.0,0.0],
+                                        n_in=96,
+                                        n_out=96,
+                                        epochs=100,
+                                        patience=10,
+                                        plots=True,
+                                        output=True,
+                                        verbose=1,
+                                        loss='custom')
     
     jpl.banana_clipper(jpl.df.index[4*96],
                        #t_end=jpl.df.index[10*96],
                         t_end=jpl.df.index[-96],
-                        freq='1h',
+                        freq='24h',
                         features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
                         n_in=96,
                         n_out=96,
-                        plots=False)
+                        plots=True)
     
     # rx = {}
     # hx = {}
