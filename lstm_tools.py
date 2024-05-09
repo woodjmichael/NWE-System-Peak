@@ -6,6 +6,8 @@ import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
 from pprint import pprint
 
+from random import shuffle
+
 import numpy as np
 import pandas as pd
 
@@ -23,6 +25,8 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoa
 from tensorflow.keras.backend import square, mean
 
 import emd
+
+print(tf.config.list_physical_devices('GPU'))
 
 class Custom_Loss_Prices(tf.keras.losses.Loss):
     def __init__(self,**kwargs):
@@ -1323,7 +1327,6 @@ def plot_daily_peak_hours(df,month,day_of_week,samples_per_day=24,
     f.gca().yaxis.set_major_formatter(PercentFormatter(1))
 
     f.show()
-    
 
 
 def accuracy_one_hot(true,pred):
@@ -1352,17 +1355,17 @@ def run_the_joules_peak(
                 shift_steps = 1,
                 dir = 'models',
                 features = [    'Load (kW)',
-                                        'Day',
-                                        'Weekday',
-                                        'Hour',
-                                        'IMF1',                                                                
-                                        'IMF2',                                                                
-                                        'IMF3',
-                                        'IMF4',
-                                        'IMF5',
-                                        'IMF6',
-                                        'IMF7',
-                                        'IMF8',],
+                                'Day',
+                                'Weekday',
+                                'Hour',
+                                'IMF1',                                                                
+                                'IMF2',                                                                
+                                'IMF3',
+                                'IMF4',
+                                'IMF5',
+                                'IMF6',
+                                'IMF7',
+                                'IMF8',],
                 targets = ['TargetsOH'],
                 train_split = 0.9,
                 afuncs={'lstm':'relu','dense':'relu','gru':'relu'},
@@ -1453,16 +1456,16 @@ def run_the_joules_peak(
 
 class RunTheJoules:
     def __init__(self,
-                site,                                         
-                filename,
-                index_col,
-                data_col,
+                site:str,                                         
+                filename:str,
+                index_col:str,
+                data_col:str,
                 models_dir='./models/',
-                persist_days = 7,
-                resample=False,
-                remove_days=False,
-                subset=False,
-                calendar_features=False):
+                persist_days:int = 7,
+                resample:str=False,
+                remove_days:str=False,
+                calendar_features:str=False,
+                test_split=0.9):
         self.site = site
         self.persist_days = persist_days
         self.data_points_per_day = None
@@ -1473,13 +1476,16 @@ class RunTheJoules:
         self.data_col = data_col
         self.resample = resample
         self.remove_days=remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
-        self.subset = subset
         self.calendar_features = calendar_features
         self.model = None
         self.df = self.get_dat()
+        test_split = self.data_points_per_day*int(test_split*(len(self.df)/self.data_points_per_day))
+        self.train = self.df[:test_split]
+        self.test = self.df[  test_split:]
+            
         
         
-    def min_max_scaler(self,df:pd.DataFrame):
+    def min_max_scaler(self,df:pd.DataFrame)->pd.DataFrame:
         xmins,xmaxs = [],[]
         for col in df.columns:
             xmin = df[col].minx()
@@ -1491,7 +1497,7 @@ class RunTheJoules:
             self.scalers
         return df
         
-    def emd_sift(self, df):
+    def emd_sift(self, df:pd.DataFrame)->pd.DataFrame:
         imf = emd.sift.sift(df['Load (kW)'].values)
 
         for i in range(imf.shape[1]):
@@ -1500,11 +1506,8 @@ class RunTheJoules:
         return df                  
         
         
-    def get_dat(self):
+    def get_dat(self)->pd.DataFrame:
         usecols = [self.index_col,self.data_col]
-        
-        if self.subset != False:
-            usecols += ['subset']
         
         df = pd.read_csv(self.filename,     
                             comment='#',
@@ -1515,15 +1518,9 @@ class RunTheJoules:
         interval_min = int(df.index.to_series().diff().mode()[0].seconds/60)
         self.data_points_per_day = int(1440/interval_min)
         self.persist_lag = self.persist_days * self.data_points_per_day
-        
-        if self.subset != False:
-            df = df[df['subset']==self.subset] # e.g. train or test
-            df = df.drop(columns=['subset'])
 
-        df.columns = ['Load (kW)']
+        df = df.rename(columns = {self.data_col:'Load (kW)'})
         df['weekday'] = df.index.weekday
-        
-        
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
 
@@ -1534,7 +1531,6 @@ class RunTheJoules:
         
         if self.resample != False:
             df = df.resample(self.resample).mean()
-        
         
         if self.remove_days == 'weekends':
             df = df[df.index.weekday < 5 ] 
@@ -1606,7 +1602,15 @@ class RunTheJoules:
     """
     Generator function for creating random batches of training-data.
     """
-    def train_batch_generator(self, batch_size, L_sequence_in, L_sequence_out, n_x_signals, n_y_signals, n, x, y):
+    def train_batch_generator(self,
+                              batch_size:int,
+                              L_sequence_in:int,
+                              L_sequence_out:int,
+                              n_x_signals:int,
+                              n_y_signals:int,
+                              n:int,
+                              x:int,
+                              y:int):
             
             # Infinite loop.
             while True:
@@ -1631,7 +1635,12 @@ class RunTheJoules:
                     yield (x_batch, y_batch)
 
     
-    def organize_dat_v4(self, df, L_sequence_in, L_sequence_out, train_split, batch_size):#shift_steps=96, sequence_length=96*7*2):
+    def organize_dat_v4(self,
+                        df:pd.DataFrame,
+                        L_sequence_in:int,
+                        L_sequence_out:int,
+                        train_split:float,
+                        batch_size:int):#shift_steps=96, sequence_length=96*7*2):
 
         # scalers
         x_scaler = MinMaxScaler()
@@ -1653,15 +1662,15 @@ class RunTheJoules:
 
         num_data = len(x_data)
         num_train = int(train_split * num_data)
-        num_test = num_data - num_train
+        #num_valid = num_data - num_train
 
         x_train = x_data[0:num_train]
-        x_test = x_data[num_train:]
-        len(x_train) + len(x_test)
+        x_valid = x_data[num_train:]
+        #len(x_train) + len(x_valid)
 
         y_train = y_data[0:num_train]
-        y_test = y_data[num_train:]
-        len(y_train) + len(y_test)
+        y_valid = y_data[num_train:]
+        #len(y_train) + len(y_test)
 
         num_x_signals = x_data.shape[1]
         num_y_signals = y_data.shape[1]
@@ -1677,11 +1686,11 @@ class RunTheJoules:
         
         #x_batch, y_batch = next(generator)
 
-        test_data = ( np.expand_dims(x_test, axis=0),np.expand_dims(y_test, axis=0))
+        valid_data = ( np.expand_dims(x_valid, axis=0),np.expand_dims(y_valid, axis=0))
         
-        return (num_x_signals, num_y_signals, generator, test_data, y_scaler)
+        return (num_x_signals, num_y_signals, generator, valid_data, y_scaler)
     
-    def organize_dat_test(self, df):
+    def organize_dat_test(self, df:pd.DataFrame):
     
         x_scaler = load(open(self.models_dir + "x_scaler.pkl", 'rb'))
         
@@ -1689,11 +1698,20 @@ class RunTheJoules:
 
         return np.expand_dims(x_test, axis=0)
     
-    def train_lstm_v5(  self, n_features_x:int, n_in:int, n_out:int, path_checkpoint:str, 
-                        generator, validation_data, units_layers:list, epochs:int, 
-                        patience:int=5, verbose:int=1,dropout:list=None,
-                        afuncs={'lstm':'relu','dense':'sigmoid'},
-                        loss='mse',):
+    def train_lstm_v5(self,
+                      n_features_x:int,
+                      n_in:int,
+                      n_out:int,
+                      path_checkpoint:str,
+                      generator,
+                      validation_data,
+                      units_layers:list,
+                      epochs:int, 
+                      patience=5,
+                      verbose=1,
+                      dropout=None,
+                      afuncs={'lstm':'relu','dense':'sigmoid'},
+                      loss='mse',):
         
         model = Sequential()
         
@@ -1703,7 +1721,8 @@ class RunTheJoules:
                         activation=afuncs['lstm']) )
         
         if dropout is not None:
-            model.add(Dropout(dropout[0]))
+            if dropout[0] != 0:
+                model.add(Dropout(dropout[0]))
         
         if len(units_layers)>1:
         
@@ -1712,7 +1731,8 @@ class RunTheJoules:
                             activation=afuncs['lstm']) ) 
             
             if dropout is not None:
-                model.add(Dropout(dropout[1]))
+                if dropout[1] != 0:
+                    model.add(Dropout(dropout[1]))
             
         model.add( Dense( n_out, activation='sigmoid') )    
 
@@ -1843,20 +1863,36 @@ class RunTheJoules:
         plt.show() 
     
             
-    def run_them_fast(self,features,units_layers,dropout,n_in,n_out,epochs=100,patience=10,verbose=0,
-                      output=False,plots=False,train_split=0.9,batch_size=256,loss='mse'):
+    def run_them_fast(self,
+                      features:str,
+                      units_layers:list,
+                      dropout:list,
+                      n_in:int,
+                      n_out:int,
+                      epochs=100,
+                      patience=10,
+                      verbose=0,
+                      output=False,
+                      plots=False,
+                      valid_split=0.9,
+                      batch_size=256,
+                      loss='mse'):
+        
         units = units_layers
         layers = len(units_layers)
+
+        self.features = features
+        self.units = units
+        self.layers = layers
+        self.dropout = dropout
+        self.n_in = n_in
+        self.n_out = n_out
+        self.valid_split = valid_split
+        self.loss = loss
         
+        df = self.train[features]
         
-        df = self.df[features]
-        
-        # header             
-        units_str = ''
-        for u in units:
-            units_str += (str(u)+' ')
-        
-        print(f'\n\n////////// units={units_str} layers={layers} //////////\n')
+        print(f'\n\n////////// units_layers={units_layers} dropout={dropout} n_in={n_in} loss={loss} //////////\n')
 
         # meta
         y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
@@ -1864,12 +1900,12 @@ class RunTheJoules:
                 
         ( n_features_x, n_features_y, 
             batchgen, dat_valid, 
-            scaler) = self.organize_dat_v4( df, n_in, n_out, train_split, batch_size)
+            scaler) = self.organize_dat_v4( df, n_in, n_out, valid_split, batch_size)
 
         (x_valid, y_valid) = dat_valid 
 
         # np
-        y_test_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
+        y_valid_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
 
         # model                                                
         self.model, hx = self.train_lstm_v5(  n_features_x, n_in, n_out, 
@@ -1878,45 +1914,57 @@ class RunTheJoules:
                                     patience, verbose, dropout,loss=loss)
                                                                 
         # evaluate
-        y_test_predict = self.model.predict(x_valid)
+        y_valid_predict = self.model.predict(x_valid)
 
-        y_test_pred_kw = scaler.inverse_transform(y_test_predict[:,:,0]).flatten()
-        y_test_kw            = scaler.inverse_transform(y_valid[:,:,0]).flatten()
+        y_valid_pred_kw = scaler.inverse_transform(y_valid_predict[:,:,0]).flatten()
+        y_valid_kw            = scaler.inverse_transform(y_valid[:,:,0]).flatten()
 
-        test_rmse_np = rmse(    y_test_kw[self.persist_lag:], 
-                                y_test_kw[:-(self.persist_lag )] )
+        valid_rmse_np = rmse(    y_valid_kw[self.persist_lag:], 
+                                y_valid_kw[:-(self.persist_lag )] )
 
         results = {}
-        results['test_rmse_pred']     = rmse(y_test_kw, y_test_pred_kw)
-        results['test_skill']         = 1 - results['test_rmse_pred'] / test_rmse_np    
-        results['test_std_diff_pred'] = np.diff(y_test_pred_kw).std()
+        results['valid_rmse_pred']     = rmse(y_valid_kw, y_valid_pred_kw)
+        results['valid_skill']         = 1 - results['valid_rmse_pred'] / valid_rmse_np    
+        results['valid_std_diff_pred'] = np.diff(y_valid_pred_kw).std()
         results['epochs']             = len(hx.history['loss']) - patience
 
         if output:
-            print('test set')
-            print(f'rmse np     {test_rmse_np:.2f}')
-            print(f'rmse pred {rmse(y_test_kw, y_test_pred_kw):.2f}')
-            print(f'skill         {1 - rmse(y_test_kw, y_test_pred_kw)/test_rmse_np:.3f}')
+            print('valid set')
+            print(f'rmse np     {valid_rmse_np:.2f}')
+            print(f'rmse pred {rmse(y_valid_kw, y_valid_pred_kw):.2f}')
+            print(f'skill         {1 - rmse(y_valid_kw, y_valid_pred_kw)/valid_rmse_np:.3f}')
 
         # plot
         if plots:
             self.plot_training_history(hx)
-            for day in range(7):
-                self.plot_predictions_day(y_test_kw, y_test_pred_kw, day=day)
-            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=1)
-            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=2)
-            #self.plot_predictions_week(y_test_kw, y_test_pred_kw, week=3)
+
+            #for day in range(7):
+                #self.plot_predictions_day(y_valid_kw, y_test_valid_kw, day=day)
+            
+            self.plot_predictions_week(y_valid_kw, y_valid_pred_kw, week=1)
+            
             #self.plot_one_prediction(self.model,x_test,y_test,n_in,n_out)
 
         return results, hx.history
     
-    def banana_clipper(self,t_begin,features,n_in,n_out,t_end=None,freq=None,output=False,plots=False,custom_loss=None):   
+    def banana_clipper(self,
+                       t_begin:pd.Timestamp,
+                       t_end=None,
+                       testfreq=None,
+                       output=False,
+                       plots=False):  
+
+        features = self.features
+        n_in = self.n_in
+        n_out = self.n_out
+             
         
         daily_skills = []
        
-        df = self.df[features]
+        df = self.test[features]
         
-        for t in pd.date_range(t_begin,t_end,freq=freq):
+        
+        for t in pd.date_range(t_begin,t_end,freq=testfreq):
 
             x = df[:t-pd.Timedelta('15min')][-1*n_in:].copy()
             
@@ -1933,7 +1981,7 @@ class RunTheJoules:
                 x_test = self.organize_dat_test(x)
                 y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
                 
-                if custom_loss is None:
+                if self.loss == 'custom':
                     model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
                 else:
                     model = tf.keras.models.load_model(self.models_dir+"lstm.keras",
@@ -1967,51 +2015,67 @@ if __name__ == '__main__':
 
     jpl = RunTheJoules( 'acn-jpl',
                         models_dir='models/acn-jpl/',
-                        #filename='C:/Users/Admin/OneDrive - Politecnico di Milano/Data/Load/Vehicle/ACN/train_JPL_v2.csv'
-                        filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
+                        
+                        #filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\Vehicle\ACN\acn_jpl_timeseries.csv',
+                        #index_col='Datetime',
+                        #data_col='Load (kW)',
+
+                        filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\MG2Lab\JPL_v4\all_jpl_v4.csv',
+                        #filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
                         index_col='times_utc-8',
                         data_col='power',
-                        subset='train',
-                        #subset='test',
+
                         remove_days=[4,5,6],
                         persist_days=1,
-                        resample='15min'
+                        resample='15min',
+                        test_split=0.9,
                         )
 
     #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
 
-    results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                                        units_layers=[24,24],
-                                        dropout=[0.0,0.0],
-                                        n_in=96,
-                                        n_out=96,
-                                        epochs=100,
-                                        patience=10,
-                                        plots=True,
-                                        output=True,
-                                        verbose=1,
-                                        loss='custom')
+    # results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,11)],
+    #                                     units_layers=[24,24],
+    #                                     dropout=[0.0,0.0],
+    #                                     n_in=96,
+    #                                     n_out=96,
+    #                                     epochs=1,
+    #                                     patience=10,
+    #                                     plots=True,
+    #                                     output=True,
+    #                                     verbose=1,
+    #                                     #loss='custom',
+    #                                     )
     
-    jpl.banana_clipper(jpl.df.index[4*96],
-                       #t_end=jpl.df.index[10*96],
-                        t_end=jpl.df.index[-96],
-                        freq='24h',
-                        features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-                        n_in=96,
-                        n_out=96,
-                        plots=True)
+    # jpl.banana_clipper(jpl.test.index[1*96],
+    #                    #t_end=jpl.df.index[10*96],
+    #                     t_end=jpl.test.index[-96],
+    #                     testfreq='24h',
+    #                     plots=True)
     
-    # rx = {}
-    # hx = {}
-    # for units1 in [24,48,96,128,256,512]:
-    #     for units2 in [24,48,96,128,256,512]:
-    #         for dropout in [0., 0.2]:
-    #             for n_in in [96,2*96,3*96]:
-    #                 model_name = f'lstm u1{units1}u2{units2}d{dropout}n{n_in}'                
-    #                 results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(3,7)],
-    #                                                     units=[units1,units2],dropout=2*[dropout],n_in=n_in,n_out=96,
-    #                                                     epochs=100,patience=15,
-    #                                                     plots=False,output=True,verbose=0)
-    # rx = pd.DataFrame(rx).transpose()
-    # rx.to_csv(jpl.model_dir+'results.csv')
-    # rx
+    rx = pd.DataFrame(columns=['units1','units2','dropout','n_in','valid_rmse_pred','valid_skill','valid_std_diff_pred','epochs'])
+    search_space = []
+    for units1 in [6,12,24,48,96,128,256]:
+        for units2 in [0,6,12,24,48,96,128,256]:
+            for dropout in [0, 0.2]:
+                for n_in in [96,2*96,3*96]:
+                    search_space.append({'units1':units1,'units2':units2,'dropout':dropout,'n_in':n_in})
+    shuffle(search_space)
+
+
+    for s in search_space:
+        try:          
+            results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,11)],
+                                                units_layers=[s['units1'],s['units2']],
+                                                dropout=2*[s['dropout']],
+                                                n_in=s['n_in'],
+                                                n_out=96,
+                                                epochs=100,
+                                                patience=10,
+                                                plots=False,
+                                                output=True,
+                                                verbose=1)
+            s.update(results)
+            rx.loc[len(rx)] = s
+            rx.to_csv(jpl.models_dir+'results.csv')
+        except:
+            pass
