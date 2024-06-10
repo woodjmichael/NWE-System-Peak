@@ -4,17 +4,14 @@ from datetime import datetime
 
 import matplotlib.pyplot as plt
 from matplotlib.ticker import PercentFormatter
-from pprint import pprint
-
-from random import shuffle
 
 import numpy as np
 import pandas as pd
 
 from sklearn.preprocessing import MinMaxScaler
 from pickle import dump, load
-from statsmodels.tsa.stattools import adfuller # upgrade statsmodels (at least 0.11.1)
-from scipy.stats import shapiro, mode
+#from statsmodels.tsa.stattools import adfuller # upgrade statsmodels (at least 0.11.1)
+#from scipy.stats import shapiro, mode
 
 import tensorflow as tf
 from tensorflow.keras.models import Sequential
@@ -1281,6 +1278,7 @@ def plot_weekly_overlaid(df,ppd=96,begin=0,alpha=0.25,
         plt.plot(t,y,alpha=alpha)
         begin, end = begin + ppw, end + ppw
     plt.title(f'{int(end/ppw)-1} weeks from {period_start} to {period_end}')    
+    plt.show()
     
 def plot_daily_overlaid(    df,ppd=96,begin=0,alpha=0.25,
                                                     period_start=None,period_end=None):
@@ -1460,12 +1458,14 @@ class RunTheJoules:
                 filename:str,
                 index_col:str,
                 data_col:str,
+                persist_col:str=None,
                 models_dir='./models/',
                 persist_days:int = 7,
                 resample:str=False,
                 remove_days:str=False,
                 calendar_features:str=False,
-                test_split=0.9):
+                test_split=0.9,
+                emd:bool=True,):
         self.site = site
         self.persist_days = persist_days
         self.data_points_per_day = None
@@ -1474,14 +1474,20 @@ class RunTheJoules:
         self.filename = filename
         self.index_col = index_col
         self.data_col = data_col
+        self.persist_col = persist_col
         self.resample = resample
         self.remove_days=remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
         self.calendar_features = calendar_features
         self.model = None
+        self.emd = emd
         self.df = self.get_dat()
+        self.peak = self.df['Load (kW)'].max()
         test_split = self.data_points_per_day*int(test_split*(len(self.df)/self.data_points_per_day))
         self.train = self.df[:test_split]
         self.test = self.df[  test_split:]
+        
+        if not os.path.exists(self.models_dir):
+            os.mkdir(self.models_dir)
             
         
         
@@ -1508,6 +1514,8 @@ class RunTheJoules:
         
     def get_dat(self)->pd.DataFrame:
         usecols = [self.index_col,self.data_col]
+        if self.persist_col is not None:
+            usecols = usecols + [self.persist_col]
         
         df = pd.read_csv(self.filename,     
                             comment='#',
@@ -1515,11 +1523,25 @@ class RunTheJoules:
                             index_col=usecols[0],
                             usecols=usecols )
         
+        df = df.ffill().bfill()
+        
+        if self.resample != False:
+            df = df.resample(self.resample).mean()
+        
         interval_min = int(df.index.to_series().diff().mode()[0].seconds/60)
         self.data_points_per_day = int(1440/interval_min)
         self.persist_lag = self.persist_days * self.data_points_per_day
-
+        
+        #print(self.data_points_per_day)
+        #print(self.persist_lag)
+        #print(df)
+        #sys.exit()
+        
         df = df.rename(columns = {self.data_col:'Load (kW)'})
+        if self.persist_col is None:
+            df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
+        else:
+            df = df.rename(columns = {self.persist_col:'Persist'})
         df['weekday'] = df.index.weekday
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
@@ -1529,8 +1551,8 @@ class RunTheJoules:
         df = df.ffill().bfill()
         
         
-        if self.resample != False:
-            df = df.resample(self.resample).mean()
+        # if self.resample != False:
+        #     df = df.resample(self.resample).mean()
         
         if self.remove_days == 'weekends':
             df = df[df.index.weekday < 5 ] 
@@ -1540,14 +1562,15 @@ class RunTheJoules:
             for day in self.remove_days:
                 df = df[df.index.weekday != day]
 
-        df = self.emd_sift(df)
+        if self.emd:
+            df = self.emd_sift(df)
                             
         if self.calendar_features:
             df['Day'] = df.index.dayofyear
             df['Hour'] = df.index.hour
             df['Weekday'] = df.index.dayofweek
         
-        df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
+        #df['Persist'] = df['Load (kW)'].shift(self.persist_lag)
     
         df = df.ffill().bfill()
 
@@ -1820,23 +1843,22 @@ class RunTheJoules:
                             f'(skill {skill:.2})')
         plt.show()    
     
-    def plot_predictions_week(self,y_true, y_pred, week=0):
+    def plot_predictions_week(self,y_true, y_pers, y_pred, week=0):
         ppd = self.data_points_per_day
         ppw = ppd*7 # points per week
-        ppp = self.persist_days *ppd
         t = np.arange(ppw)
 
-        y_true_wk = y_true[(week+1)*ppw     :(week+2)*ppw    ]
-        y_np1w_wk = y_true[(week+1)*ppw-ppp :(week+2)*ppw-ppp]
-        y_pred_wk = y_pred[(week+1)*ppw     :(week+2)*ppw    ]
+        y_true_wk = y_true[(week+1)*ppw :(week+2)*ppw]
+        y_pers_wk = y_pers[(week+1)*ppw :(week+2)*ppw]
+        y_pred_wk = y_pred[(week+1)*ppw :(week+2)*ppw]
 
-        rmse_np1w = np.sqrt(np.mean(np.square(y_np1w_wk - y_true_wk)))
+        rmse_np1w = np.sqrt(np.mean(np.square(y_pers_wk - y_true_wk)))
         rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
         skill = (rmse_np1w - rmse_pred)/rmse_np1w
 
         plt.figure(figsize=(20,6))
         plt.plot( t,y_true_wk,
-                            t,y_np1w_wk,
+                            t,y_pers_wk,
                             t,y_pred_wk)
         
         plt.legend([    'true',
@@ -1912,27 +1934,29 @@ class RunTheJoules:
                                     path_checkpoint, batchgen, 
                                     dat_valid, units_layers, epochs,
                                     patience, verbose, dropout,loss=loss)
-                                                                
-        # evaluate
-        y_valid_predict = self.model.predict(x_valid)
-
-        y_valid_pred_kw = scaler.inverse_transform(y_valid_predict[:,:,0]).flatten()
-        y_valid_kw            = scaler.inverse_transform(y_valid[:,:,0]).flatten()
-
-        valid_rmse_np = rmse(    y_valid_kw[self.persist_lag:], 
-                                y_valid_kw[:-(self.persist_lag )] )
 
         results = {}
-        results['valid_rmse_pred']     = rmse(y_valid_kw, y_valid_pred_kw)
-        results['valid_skill']         = 1 - results['valid_rmse_pred'] / valid_rmse_np    
-        results['valid_std_diff_pred'] = np.diff(y_valid_pred_kw).std()
-        results['epochs']             = len(hx.history['loss']) - patience
+        if 0: # not working                                                        
+            # evaluate
+            y_valid_predict = self.model.predict(x_valid)
+            
+            y_valid_kw            = scaler.inverse_transform(y_valid[:,:,0]).flatten()
+            y_valid_pred_kw = scaler.inverse_transform(y_valid_predict[:,:,0]).flatten()
+            y_valid_persist_kw = self.df.iloc[int(valid_split*len(self.df)):,:]['Persist']
+
+            valid_rmse_np = rmse(    y_valid_kw, 
+                                    y_valid_persist_kw )
+            
+            results['valid_rmse_pred']     = rmse(y_valid_kw, y_valid_pred_kw)
+            results['valid_skill']         = 1 - results['valid_rmse_pred'] / valid_rmse_np    
+            results['valid_std_diff_pred'] = np.diff(y_valid_pred_kw).std()
+            results['epochs']             = len(hx.history['loss']) - patience
 
         if output:
-            print('valid set')
-            print(f'rmse np     {valid_rmse_np:.2f}')
-            print(f'rmse pred {rmse(y_valid_kw, y_valid_pred_kw):.2f}')
-            print(f'skill         {1 - rmse(y_valid_kw, y_valid_pred_kw)/valid_rmse_np:.3f}')
+            print('Validation results:')
+            print(f'    nRMSE persist {100*valid_rmse_np/self.peak:.1f}%')
+            print(f'    nRMSE lstm    {100*rmse(y_valid_kw, y_valid_pred_kw)/self.peak:.1f}%')
+            print(f'    Skill (nRMSE) {100 - 100*rmse(y_valid_kw, y_valid_pred_kw)/valid_rmse_np:.1f}%')
 
         # plot
         if plots:
@@ -1941,7 +1965,10 @@ class RunTheJoules:
             #for day in range(7):
                 #self.plot_predictions_day(y_valid_kw, y_test_valid_kw, day=day)
             
-            self.plot_predictions_week(y_valid_kw, y_valid_pred_kw, week=1)
+            #y_valid_kw = self.df.iloc[int(valid_split*len(self.df)):,:]['Load (kW)']
+            y_valid_persist_kw = self.df.iloc[int(valid_split*len(self.df)):,:]['Persist']
+
+            self.plot_predictions_week(y_valid_kw, y_valid_persist_kw, y_valid_pred_kw, week=1)
             
             #self.plot_one_prediction(self.model,x_test,y_test,n_in,n_out)
 
@@ -1951,10 +1978,11 @@ class RunTheJoules:
                        t_begin:pd.Timestamp,
                        t_end=None,
                        testfreq=None,
-                       output=False,
-                       plots=False):  
+                       output=True,
+                       plots=False,):  
 
         features = self.features
+            
         n_in = self.n_in
         n_out = self.n_out
              
@@ -1968,24 +1996,26 @@ class RunTheJoules:
 
             x = df[:t-pd.Timedelta('15min')][-1*n_in:].copy()
             
-            y_true = df.loc[t:,'Load (kW)'][:n_out].copy()
-            y_pers = df.loc[t:,'Persist'][:n_out].copy()
+            y_true = df.loc[t:,self.data_col][:n_out].copy()
+            y_pers = df.loc[t:,self.persist_col][:n_out].copy()
             
             rmse_pers = ((y_true-y_pers)**2).mean()**0.5
             
             if rmse_pers < 0.001:
-                print ('\nPersistence == perfect')
+                if output:
+                    print ('\nPersistence == perfect')
             elif t != y_true.index[0]:
-                print ('\nWeekday doesnt exist in training data')
+                if output:
+                    print ('\nWeekday doesnt exist in training data')
             else:
                 x_test = self.organize_dat_test(x)
                 y_scaler = load(open(self.models_dir + "y_scaler.pkl", 'rb')) 
                 
                 if self.loss == 'custom':
-                    model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
-                else:
                     model = tf.keras.models.load_model(self.models_dir+"lstm.keras",
-                                                    custom_objects={'Custom_Loss_Prices':Custom_Loss_Prices,})
+                                                       custom_objects={'Custom_Loss_Prices':Custom_Loss_Prices,})
+                else:
+                    model = tf.keras.models.load_model(self.models_dir+"lstm.keras")
                 
                 y_pred = model.predict(x_test[:,-1*n_in:,:])
                 
@@ -2012,70 +2042,106 @@ class RunTheJoules:
         print(f'Average skill: {100*daily_skills.mean():.1f}%')
             
 if __name__ == '__main__':
-
-    jpl = RunTheJoules( 'acn-jpl',
-                        models_dir='models/acn-jpl/',
-                        
-                        #filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\Vehicle\ACN\acn_jpl_timeseries.csv',
-                        #index_col='Datetime',
-                        #data_col='Load (kW)',
-
-                        filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\MG2Lab\JPL_v4\all_jpl_v4.csv',
-                        #filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
-                        index_col='times_utc-8',
-                        data_col='power',
-
-                        remove_days=[4,5,6],
+     
+    rtj = RunTheJoules( 'debug',
+                        models_dir='./models/debug/',
+                        filename='~/OneDrive/Data/Load/Commercial/bayfield_jail-courthouse_load_persist_210829_240608_1min.csv',
+                        index_col='Datetime CST',
+                        data_col='Load [kW]',
+                        persist_col='Persist [kW]',
                         persist_days=1,
+                        remove_days='weekend',                        
                         resample='15min',
                         test_split=0.9,
-                        )
+                            )
+    
+    r, h = rtj.run_them_fast(features=['Load (kW)'],#+[f'IMF{x}' for x in [4,5,6,9]],
+                            units_layers=[24,24],
+                            dropout=[0,0],
+                            n_in=96,
+                            n_out=96,
+                            epochs=1,
+                            patience=15,
+                            plots=True,
+                            output=True,
+                            verbose=1,
+                            )
 
-    #lstm.plot_weekly_overlaid(jpl.df,days_per_week=5)
+    # jpl = RunTheJoules( 'bayfield_jail',
+    #                     models_dir='models/bayfield_jail_2021.4.21_2022.4.19/',
+                        
+    #                     #filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\Vehicle\ACN\acn_jpl_timeseries.csv',
+    #                     #index_col='Datetime',
+    #                     #data_col='Load (kW)',
 
-    # results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,11)],
+    #                     #filename=r'C:\Users\woodj\OneDrive - Politecnico di Milano\Data\Load\MG2Lab\JPL_v4\all_jpl_v4.csv',
+    #                     #filename='/home/mjw/OneDrive/Data/Load/Vehicle/ACN/processed/all_JPL_v4.csv',
+    #                     #index_col='times_utc-8',
+    #                     #data_col='power',
+    #                     #resample='15min',
+    #                     #remove_days=[4,5,6],
+    #                     #persist_days=1,
+    #                     #test_split=0.9,
+                        
+    #                     filename=r'/home/mjw/OneDrive/Data/Load/Commercial/Jail_load_solar_1min_2021-4-21_2022-4-19_profilized.csv',
+    #                     index_col='Datetime CST',
+    #                     data_col='Load [kW]',
+    #                     persist_days=7,                        
+    #                     resample='15min',
+    #                     test_split=0.962,
+    #                     )
+
+    # plot_weekly_overlaid(jpl.df,days_per_week=7)
+    
+
+    # results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,10)],
     #                                     units_layers=[24,24],
-    #                                     dropout=[0.0,0.0],
+    #                                     dropout=[0,0],
     #                                     n_in=96,
     #                                     n_out=96,
-    #                                     epochs=1,
-    #                                     patience=10,
+    #                                     epochs=100,
+    #                                     patience=20,
     #                                     plots=True,
     #                                     output=True,
     #                                     verbose=1,
     #                                     #loss='custom',
     #                                     )
     
-    # jpl.banana_clipper(jpl.test.index[1*96],
+    # jpl.n_in = 96
+    # jpl.n_out = 96
+    # jpl.features = ['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,10)]
+    # jpl.loss = 'mse'
+    
+    # jpl.banana_clipper(jpl.test.index[7*96],
     #                    #t_end=jpl.df.index[10*96],
     #                     t_end=jpl.test.index[-96],
     #                     testfreq='24h',
-    #                     plots=True)
+    #                     plots=True,)
     
-    rx = pd.DataFrame(columns=['units1','units2','dropout','n_in','valid_rmse_pred','valid_skill','valid_std_diff_pred','epochs'])
-    search_space = []
-    for units1 in [6,12,24,48,96,128,256]:
-        for units2 in [0,6,12,24,48,96,128,256]:
-            for dropout in [0, 0.2]:
-                for n_in in [96,2*96,3*96]:
-                    search_space.append({'units1':units1,'units2':units2,'dropout':dropout,'n_in':n_in})
-    shuffle(search_space)
+    # rx = pd.DataFrame(columns=['units1','units2','dropout','n_in','valid_rmse_pred','valid_skill','valid_std_diff_pred','epochs'])
+    # search_space = []
+    # for units1 in [6,12,24,48,96,128,256]:
+    #     for units2 in [0,6,12,24,48,96,128,256]:
+    #         for dropout in [0, 0.2]:
+    #             for n_in in [96,2*96,3*96]:
+    #                 search_space.append({'units1':units1,'units2':units2,'dropout':dropout,'n_in':n_in})
+    # shuffle(search_space)
 
 
-    for s in search_space:
-        try:          
-            results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,11)],
-                                                units_layers=[s['units1'],s['units2']],
-                                                dropout=2*[s['dropout']],
-                                                n_in=s['n_in'],
-                                                n_out=96,
-                                                epochs=100,
-                                                patience=10,
-                                                plots=False,
-                                                output=True,
-                                                verbose=1)
-            s.update(results)
-            rx.loc[len(rx)] = s
-            rx.to_csv(jpl.models_dir+'results.csv')
-        except:
-            pass
+    # for s in search_space:
+    #     try:          
+    #         results, history = jpl.run_them_fast(features=['Load (kW)','Persist'] + [f'IMF{x}' for x in range(1,11)],
+    #                                             units_layers=[s['units1'],s['units2']],
+    #                                             dropout=2*[s['dropout']],
+    #                                             n_in=s['n_in'],
+    #                                             n_out=96,
+    #                                             epochs=100,
+    #                                             patience=10,
+    #                                             plots=False,
+    #                                             output=True,
+    #                                             verbose=1)
+    #         s.update(results)
+    #         rx.loc[len(rx)] = s
+    #         rx.to_csv(jpl.models_dir+'results.csv')
+    #     except:
+    #         pass
