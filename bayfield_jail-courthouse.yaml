@@ -1,0 +1,43 @@
+version: 1.2
+
+# any configs here can be overwriteen by any in code
+
+# data
+site: bayfield_jail-courthouse_v1.2
+filename: ~/OneDrive/Data/Load/Commercial/bayfield_jail-courthouse_load_persist_210829_240608_1min.csv
+index_col: Datetime CST
+data_col: Load [kW]
+persist_col: Persist [kW]
+persist_days: 1
+remove_days: weekends
+resample: 15min
+test_split: 0.05
+emd: True
+
+# model
+results_dir: ./results/
+clean_dir: False
+units_layers: [256,256]
+dropout: [0,0]
+n_in: 96
+n_out: 96
+batch_size: 256
+features: Load
+features_list_name: IMF
+features_list_numbers: []
+features_list_numbers: [4,5,6,9]
+#features_list_numbers: [1,2,3,4,5,6,7,8,9,10,11,12]
+calendar_features: False
+
+# training
+epochs: 250
+patience: 50
+plots: False #'hx'
+output: False
+verbose: 1
+valid_split: 0.2
+loss: mse
+
+# testing
+test_plots: False
+test_output: True
