@@ -1,4 +1,4 @@
-__version__ = 1.2
+__version__ = 1.3
 
 import os, sys, shutil
 
@@ -1521,7 +1521,7 @@ class RunTheJoules:
         assert cfg.version == __version__
         self.config = cfg
         self.site = cfg.site
-        self.persist_days = cfg.persist_days
+        self.persist_calc_days = cfg.persist_calc_days
         self.data_points_per_day = None
         self.persist_lag = None
         self.results_dir = cfg.results_dir+cfg.site+'/'
@@ -1546,7 +1546,7 @@ class RunTheJoules:
         self.dropout = cfg.dropout
         self.n_in = cfg.n_in
         self.n_out = cfg.n_out
-        self.features = [cfg.features] + [f'{cfg.features_list_name}{i}' for i in cfg.features_list_numbers]
+        self.features = cfg.features + [f'{cfg.features_list_name}{i}' for i in cfg.features_list_numbers]
         self.loss = cfg.loss
         self.epochs = cfg.epochs
         self.patience = cfg.patience
@@ -1599,7 +1599,8 @@ class RunTheJoules:
                             comment='#',
                             parse_dates=True,
                             index_col=usecols[0],
-                            usecols=usecols )
+                            #usecols=usecols
+                            )
         
         df = df.ffill().bfill()
         
@@ -1608,18 +1609,17 @@ class RunTheJoules:
         
         interval_min = int(df.index.to_series().diff().mode()[0].seconds/60)
         self.data_points_per_day = int(1440/interval_min)
-        self.persist_lag = self.persist_days * self.data_points_per_day
+        if self.persist_calc_days:
+            self.persist_lag = self.persist_calc_days * self.data_points_per_day
         
-        #print(self.data_points_per_day)
-        #print(self.persist_lag)
-        #print(df)
-        #sys.exit()
-        
-        df = df.rename(columns = {self.data_col:'Load'})
-        if self.persist_col is None:
-            df['Persist'] = df['Load'].shift(self.persist_lag)
-        else:
-            df = df.rename(columns = {self.persist_col:'Persist'})
+        df.columns = [x.split('[')[0].split(' ')[0] for x in df.columns]
+
+        # df = df.rename(columns = {self.data_col:'Load'})
+        # if self.persist_col is None:
+        #     df['Persist'] = df['Load'].shift(self.persist_lag)
+        # else:
+        #     df = df.rename(columns = {self.persist_col:'Persist'})
+            
         df['weekday'] = df.index.weekday
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
@@ -1967,7 +1967,7 @@ class RunTheJoules:
     def plot_predictions_day(self,y_true, y_pred, y_pers_wk=None, day=0):
         ppd = self.data_points_per_day
         #ppw = ppd*7 # points per week
-        ppp = self.persist_days *ppd
+        ppp = self.persist_calc_days *ppd
         t = np.arange(ppd)
 
         y_true_wk = y_true[(day+1)*ppd     :(day+2)*ppd    ]
@@ -1986,7 +1986,7 @@ class RunTheJoules:
                             t,y_pred_wk)
         
         plt.legend([    'true',
-                                    f'persist {self.persist_days}d (rmse {rmse_pers:.0f})', 
+                                    f'persist {self.persist_calc_days}d (rmse {rmse_pers:.0f})', 
                                     f'predict (rmse {rmse_pred:.0f})'])
         
         plt.title(f'test set week {day+1} of {int(len(y_true)/ppd)} '
@@ -2012,7 +2012,7 @@ class RunTheJoules:
                             t,y_pred_wk)
         
         plt.legend([    'true',
-                                    f'persist {self.persist_days}d (rmse {rmse_np1w:.0f})', 
+                                    f'persist {self.persist_calc_days}d (rmse {rmse_np1w:.0f})', 
                                     f'predict (rmse {rmse_pred:.0f})'])
         
         plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
@@ -2345,7 +2345,11 @@ class RunTheJoules:
             print(f'Poor form to begin testing on training data, changing start of the test to {self.test_t0}')
             t0 = self.test_t0
 
-        df = self.df[self.features+['Persist']]
+
+        if 'Persist' not in self.df.columns:
+            df = self.df[self.features + ['Persist']]
+        else:
+            df = self.df[self.features]
 
         y_scaler = load(open(self.results_dir + "y_scaler.pkl", 'rb')) 
         if self.loss == 'custom':
@@ -2495,30 +2499,11 @@ class RunTheJoules:
             
 if __name__ == '__main__':
      
-    """
-    Data
-    """ 
     model = RunTheJoules('bayfield_jail-courthouse.yaml')
 
-    """
-    Train
-    """
-    # r, h = model.run_them_fast(units_layers=[256,256],
-    #                            dropout=[0,0],
-    #                            n_in=96,
-    #                            features=['Load']+[f'IMF{x}' for x in [4,5,6,9]],
-    #                            plots='hx',
-    #                            epochs=250,
-    #                            patience=50,)
+    r, h = model.run_them_fast()
 
-    """
-    Train
-    """
-    model.banana_clipper()#limit=4)
-
-    """
-    Random search
-    """  
+    model.banana_clipper()#limit=1)  
 
     # model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
     #                             [0,4,8,12,24,48,96,128,256], # units 2
