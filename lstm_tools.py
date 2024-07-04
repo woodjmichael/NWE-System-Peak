@@ -28,8 +28,6 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoa
                                                                                 ReduceLROnPlateau
 from tensorflow.keras.backend import square, mean
 
-import keras_tuner as kt
-
 import emd
 
 print(tf.config.list_physical_devices('GPU'))
@@ -2101,7 +2099,7 @@ class RunTheJoules:
         df = self.train[self.features]
         
         print(f'\n\n\n////////// units_layers={units_layers} dropout={dropout} n_in={self.n_in} loss={loss}//////////')
-        print(f'\n////////// features = {', '.join(features)}//////////\n\n\n')
+        print(f"\n////////// features = {', '.join(features)}//////////\n\n\n")
 
         # meta
         y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
@@ -2480,8 +2478,9 @@ class RunTheJoules:
         results = pd.DataFrame(columns=['units1','units2','dropout','n_in','features','mean_skill',
                                         'positive_skills','epochs'])        
         for s in [x for x in search_space if x not in search_space_complete]: # exlude existing 
-            try:
+            try:                
                 self.results_dir = main_results_dir + f'u{s.u1}-{s.u2}_d{s.d}_in{s.n}_flen{len(s.f)}/'
+                
                 if not os.path.exists(self.results_dir):
                     os.mkdir(self.results_dir)
                 _, h = self.run_them_fast(units_layers=[s.u1,s.u2],
@@ -2501,15 +2500,17 @@ if __name__ == '__main__':
      
     model = RunTheJoules('bayfield_jail-courthouse.yaml')
 
-    r, h = model.run_them_fast()
+    #r, h = model.run_them_fast()
 
-    model.banana_clipper()#limit=1)  
+    #model.banana_clipper(limit=10)  
 
-    # model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
-    #                             [0,4,8,12,24,48,96,128,256], # units 2
-    #                             [0, 0.1],#0,0.1] # dropout
-    #                             [24,48,96,2*96,3*96], # n_in
-    #                             [['Load'],
-    #                              ['Load']+[f'IMF{x}' for x in [4,5,6,9]],
-    #                              ['Load']+[f'IMF{x}' for x in range(1,13)]],
-    #                              ) # features
+    model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
+                                [0,4,8,12,24,48,96,128,256], # units 2
+                                [0, 0.1],#0,0.1] # dropout
+                                [24,48,96,2*96,3*96], # n_in
+                                [   ['Load','Persist'], # features
+                                    ['Load','Persist','temp'],
+                                    ['Load','Persist',]+[f'IMF{x}' for x in [4,5,6,9]],
+                                    ['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
+                                    ['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
+                                    ['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]  ]) 
