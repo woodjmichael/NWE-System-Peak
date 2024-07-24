@@ -3,7 +3,7 @@
 import os
 import pandas as pd
 
-gs_dir = 'results/bayfield_jail-courthouse_v1.3_rand_max10epochs/'
+gs_dir = 'results/bayfield_jail-courthouse_v1.3_rand/'
 
 dirs = next(os.walk(gs_dir))[1]
 

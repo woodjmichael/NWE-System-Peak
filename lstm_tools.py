@@ -2512,5 +2512,6 @@ if __name__ == '__main__':
                                     ['Load','Persist','temp'],
                                     ['Load','Persist',]+[f'IMF{x}' for x in [4,5,6,9]],
                                     ['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
-                                    ['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
-                                    ['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]  ]) 
+                                    #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
+                                    #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
+                                    ]) 

@@ -3,7 +3,7 @@ version: 1.3
 # any configs here can be overwriteen by code
 
 # data
-site: bayfield_jail-courthouse_v1.3_rand_max10epochs
+site: bayfield_jail-courthouse_v1.3_rand
 filename: data/load_persist_weather_weekdays_IMFs_bayfield_jail-courthouse_weekdays_210830-240607_1min.csv
 index_col: Datetime CST
 data_col: Load [kW]
@@ -30,7 +30,7 @@ features_list_numbers: [4,5,6,9]
 calendar_features: False
 
 # training
-epochs: 10
+epochs: 100
 patience: 20
 plots: #'hx'
 output: False
