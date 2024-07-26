@@ -1,4 +1,4 @@
-__version__ = 1.3
+__version__ = 1.4
 
 import os, sys, shutil
 
@@ -1609,8 +1609,12 @@ class RunTheJoules:
         self.data_points_per_day = int(1440/interval_min)
         if self.persist_calc_days:
             self.persist_lag = self.persist_calc_days * self.data_points_per_day
+            if self.persist_col is None and 'Persist' not in df.columns:
+                df['Persist'] = df['Load'].shift(self.persist_lag)
         
-        df.columns = [x.split('[')[0].split(' ')[0] for x in df.columns]
+        # drop units from any column headers
+        df.columns = [x.split('[')[0] for x in df.columns]
+        df.columns = [x.split('(')[0] for x in df.columns]
 
         # df = df.rename(columns = {self.data_col:'Load'})
         # if self.persist_col is None:
@@ -1618,14 +1622,12 @@ class RunTheJoules:
         # else:
         #     df = df.rename(columns = {self.persist_col:'Persist'})
             
-        df['weekday'] = df.index.weekday
+        df['Weekday'] = df.index.weekday
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
 
         #df = df.tz_convert(None)
-        df = df.ffill().bfill()
-        df = df.ffill().bfill()
-        
+        df = df.ffill().bfill()        
         
         # if self.resample != False:
         #     df = df.resample(self.resample).mean()
@@ -2340,14 +2342,18 @@ class RunTheJoules:
             t0 = pd.to_datetime(t0)
         
         if t0 < self.test_t0:
-            print(f'Poor form to begin testing on training data, changing start of the test to {self.test_t0}')
+            print(f'Bad idea to begin testing on training data, changing start of the test to {self.test_t0}')
             t0 = self.test_t0
 
 
-        if 'Persist' not in self.df.columns:
+        #print(self.features);print(self.df.columns)
+        
+        if 'Persist' not in self.features:
             df = self.df[self.features + ['Persist']]
         else:
             df = self.df[self.features]
+            
+        #print(df.columns);sys.exit()
 
         y_scaler = load(open(self.results_dir + "y_scaler.pkl", 'rb')) 
         if self.loss == 'custom':
@@ -2365,9 +2371,11 @@ class RunTheJoules:
         
         i0 = self.df.index.get_loc(t0)
         hours_remaining = (len(df.index) - i0)//4 - 48
+        days_remaining = hours_remaining//24
         if limit is not None:
             hours_remaining = limit
-        for t in [df.index[i0+4*x] for x in range(hours_remaining)]:
+        #for t in [df.index[i0+4*x] for x in range(hours_remaining)]:
+        for t in [df.index[i0+96*x] for x in range(days_remaining)]:
             
             if self.test_output:print(t)
 
@@ -2498,20 +2506,20 @@ class RunTheJoules:
             
 if __name__ == '__main__':
      
-    model = RunTheJoules('bayfield_jail-courthouse.yaml')
+    model = RunTheJoules('jpl_ev.yaml')
 
-    #r, h = model.run_them_fast()
+    r, h = model.run_them_fast()
 
-    #model.banana_clipper(limit=10)  
+    model.banana_clipper()
 
-    model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
-                                [0,4,8,12,24,48,96,128,256], # units 2
-                                [0, 0.1],#0,0.1] # dropout
-                                [24,48,96,2*96,3*96], # n_in
-                                [   ['Load','Persist'], # features
-                                    ['Load','Persist','temp'],
-                                    ['Load','Persist',]+[f'IMF{x}' for x in [4,5,6,9]],
-                                    ['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
-                                    #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
-                                    #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
-                                    ]) 
+    # model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
+    #                             [0,4,8,12,24,48,96,128,256], # units 2
+    #                             [0, 0.1],#0,0.1] # dropout
+    #                             [24,48,96,2*96,3*96], # n_in
+    #                             [   ['Load','Persist'], # features
+    #                                 #['Load','Persist','temp'],
+    #                                 #['Load','Persist',]+[f'IMF{x}' for x in [4,5,6,9]],
+    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
+    #                                 #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
+    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
+    #                                 ])

@@ -3,7 +3,7 @@
 import os
 import pandas as pd
 
-gs_dir = 'results/bayfield_jail-courthouse_v1.3_rand/'
+gs_dir = '/home/mjw/Code/LSTMforecast/results/jpl_ev_v1.3/'
 
 dirs = next(os.walk(gs_dir))[1]
 

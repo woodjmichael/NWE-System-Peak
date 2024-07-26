@@ -1,0 +1,46 @@
+version: 1.4
+
+# any configs here can be overwriteen by code
+
+# data
+# pers1D nMAE all = 10.6%
+# pers7D nMAE all = 6.0%
+# pers1WD nMAE all = 5.1%
+site: jpl_ev_v1.4
+filename: data/all_JPL_v5.csv
+index_col: Datetime
+data_col: Load
+persist_col: #Persist
+persist_calc_days: 1 # int or False (then need a persist_col above)
+remove_days: weekends
+resample: 15min
+test_split: 0.05
+emd: True
+
+# model
+results_dir: ./results/
+clean_dir: False
+units_layers: [24,0]
+dropout: [0,0]
+n_in: 96
+n_out: 96
+batch_size: 256
+features: [Load, Persist1Workday]
+features_list_name: IMF
+#features_list_numbers: []
+features_list_numbers: [3,4]
+#features_list_numbers: [1,2,3,4,5,6,7,8,9,10,11,12]
+calendar_features: False
+
+# training
+epochs: 100
+patience: 10
+plots: 'hx'
+output: False
+verbose: 1
+valid_split: 0.2
+loss: mse
+
+# testing
+test_plots: True
+test_output: True
