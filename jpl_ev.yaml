@@ -1,4 +1,4 @@
-version: 1.4
+version: 1.5
 
 # any configs here can be overwriteen by code
 
@@ -11,16 +11,16 @@ filename: data/all_JPL_v5.csv
 index_col: Datetime
 data_col: Load
 persist_col: #Persist
-persist_calc_days: 1 # int or False (then need a persist_col above)
+persist_calc_days: 7 # int or False (then need a persist_col above)
 remove_days: weekends
 resample: 15min
-test_split: 0.05
+test_split: 0.1
 emd: True
 
 # model
 results_dir: ./results/
 clean_dir: False
-units_layers: [24,0]
+units_layers: [256,256]
 dropout: [0,0]
 n_in: 96
 n_out: 96
@@ -29,18 +29,18 @@ features: [Load, Persist1Workday]
 features_list_name: IMF
 #features_list_numbers: []
 features_list_numbers: [3,4]
-#features_list_numbers: [1,2,3,4,5,6,7,8,9,10,11,12]
 calendar_features: False
 
 # training
 epochs: 100
 patience: 10
-plots: 'hx'
+plots: #'hx'
 output: False
 verbose: 1
 valid_split: 0.2
 loss: mse
 
 # testing
-test_plots: True
+forecast_freq: 1d # 1h or 1d
+test_plots: False
 test_output: True

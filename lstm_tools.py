@@ -1,4 +1,4 @@
-__version__ = 1.4
+__version__ = 1.5
 
 import os, sys, shutil
 
@@ -1554,6 +1554,7 @@ class RunTheJoules:
         self.test_plots = cfg.test_plots
         self.test_output = cfg.test_output
         self.batch_size = cfg.batch_size
+        self.forecast_freq = cfg.forecast_freq
         
         if not os.path.exists(self.results_dir):
             os.mkdir(self.results_dir)
@@ -2327,7 +2328,8 @@ class RunTheJoules:
                        t0:str=None,
                        test_output=None,
                        test_plots=None,
-                       limit=None):  
+                       limit=None,
+                       forecast_freq='1h'):  
         
         if test_output is not None:
             self.test_output = test_output
@@ -2374,8 +2376,14 @@ class RunTheJoules:
         days_remaining = hours_remaining//24
         if limit is not None:
             hours_remaining = limit
-        #for t in [df.index[i0+4*x] for x in range(hours_remaining)]:
-        for t in [df.index[i0+96*x] for x in range(days_remaining)]:
+        
+        if self.forecast_freq == '1h':
+            k = 4
+            remaining = hours_remaining
+        elif self.forecast_freq == '1d':
+            k = 96
+            remaining = days_remaining
+        for t in [df.index[i0+k*x] for x in range(remaining)]:
             
             if self.test_output:print(t)
 
@@ -2456,7 +2464,7 @@ class RunTheJoules:
         main_results_dir = self.results_dir
         
         # what are the already completed models?
-        search_space_complete = []
+        search_space_completed = []
         files = next(os.walk(main_results_dir))[1]
         for s in files:
             u1 = int( s.split('_')[0][1:].split('-')[0] )
@@ -2469,7 +2477,7 @@ class RunTheJoules:
                 f = f + [f'IMF{x}' for x in [4,5,6,9]]
             if flen == 13:
                 f = f + [f'IMF{x}' for x in range(1,13)]
-            search_space_complete.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
+            search_space_completed.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
                                         
         # build search space
         search_space = []
@@ -2485,7 +2493,7 @@ class RunTheJoules:
         # walk through search space
         results = pd.DataFrame(columns=['units1','units2','dropout','n_in','features','mean_skill',
                                         'positive_skills','epochs'])        
-        for s in [x for x in search_space if x not in search_space_complete]: # exlude existing 
+        for s in [x for x in search_space if x not in search_space_completed]: # exlude existing 
             try:                
                 self.results_dir = main_results_dir + f'u{s.u1}-{s.u2}_d{s.d}_in{s.n}_flen{len(s.f)}/'
                 
@@ -2500,14 +2508,29 @@ class RunTheJoules:
                 s.update(r)
                 results.loc[len(results)] = s
                 results.to_csv(main_results_dir+'/results.csv')
+                model.analyze_hyperparam_search()
             except:
-                pass         
-
+                pass  
             
+    def analyze_hyperparam_search(self):
+        dirs = next(os.walk(self.results_dir))[1]
+        results = pd.DataFrame({'model':[],'mean_skill':[]})
+        for d in dirs:
+            files = os.listdir(self.results_dir+d)
+            if 'errors.csv' in files:
+                e = pd.read_csv(self.results_dir+d+'/errors.csv',index_col=1,parse_dates=True)
+                mean_skill = e.skill_mae.mean().round(3)
+                results.loc[len(results)] = {'model':d,'mean_skill':mean_skill}
+        results = results.sort_values(by=['mean_skill'],ascending=False)
+        results.to_csv(self.results_dir+'results_summary.csv')
+        print(results)
+       
+
+
 if __name__ == '__main__':
      
     model = RunTheJoules('jpl_ev.yaml')
-
+    
     r, h = model.run_them_fast()
 
     model.banana_clipper()
@@ -2515,11 +2538,13 @@ if __name__ == '__main__':
     # model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
     #                             [0,4,8,12,24,48,96,128,256], # units 2
     #                             [0, 0.1],#0,0.1] # dropout
-    #                             [24,48,96,2*96,3*96], # n_in
-    #                             [   ['Load','Persist'], # features
+    #                             [12,24,48,96,2*96,3*96], # n_in
+    #                             [   ['Load','Persist1Workday'], # features
     #                                 #['Load','Persist','temp'],
-    #                                 #['Load','Persist',]+[f'IMF{x}' for x in [4,5,6,9]],
+    #                                 ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
     #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
     #                                 #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
     #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
     #                                 ])
+    
+    #model.analyze_hyperparam_search()
