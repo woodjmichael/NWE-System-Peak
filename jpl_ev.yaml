@@ -1,4 +1,4 @@
-version: 1.5
+version: 1.6
 
 # any configs here can be overwriteen by code
 
@@ -35,7 +35,6 @@ calendar_features: False
 epochs: 100
 patience: 10
 plots: #'hx'
-output: False
 verbose: 1
 valid_split: 0.2
 loss: mse
