@@ -41,17 +41,35 @@ pd.options.display.float_format = '{:.2f}'.format
 #tf.random.set_seed(42) 
 
 class dotdict(dict):
+    """ Create a dictionary that can be accessed with dot notation
+    """
     __getattr__ = dict.__getitem__
     __setattr__ = dict.__setitem__
     __delattr__ = dict.__delitem__
 
-def read_yaml(config_file:str=None) -> dotdict:
+def read_yaml(config_file:str) -> dotdict:
+    """ Open and parse yaml file into dict
+
+    Args:
+        config_file (str): Path to yaml file.
+
+    Returns:
+        dotdict: _description_
+    """
     with open(config_file, 'r') as stream:
         d=yaml.safe_load(stream)
     cfg = dotdict(d)
     return cfg
 
 def model_builder_kt(hp):
+    """ In development
+
+    Args:
+        hp (_type_): _description_
+
+    Returns:
+        _type_: _description_
+    """
     n_features_x=1
     n_in=96
     n_out=96 
@@ -92,6 +110,7 @@ def model_builder_kt(hp):
     return model
 
 class Custom_Loss_Prices(tf.keras.losses.Loss):
+    """ Under development """
     def __init__(self,**kwargs):
         super().__init__(**kwargs)
         self.prices = 7*[1]+5*[5]+12*[1] # 24 hourly "prices" [.1,.1,.1,.1... .3,.3,.3,.3,... 1,1,1] / 20
@@ -105,6 +124,10 @@ class Custom_Loss_Prices(tf.keras.losses.Loss):
         
 
 class RunTheJoules:
+    """_Define, train, hyperparamter optimze, and test a forecast algorithm based on:
+            'Day Ahead Electric Load Forecast: A Comprehensive LSTM-EMD Methodology and Several
+            Diverse Case Studies' by M. Wood in MDPI Forecasting (2023)
+    """
     def __init__(self,config_file):
         cfg = read_yaml(config_file)
         #self.confg_filepath = config_file
@@ -160,6 +183,14 @@ class RunTheJoules:
         
         
     def min_max_scaler(self,df:pd.DataFrame)->pd.DataFrame:
+        """ Replacement for statstools minmax scaler
+
+        Args:
+            df (pd.DataFrame): data to scale
+
+        Returns:
+            pd.DataFrame: scaled data
+        """
         xmins,xmaxs = [],[]
         for col in df.columns:
             xmin = df[col].minx()
@@ -172,6 +203,18 @@ class RunTheJoules:
         return df
         
     def emd_sift(self, df:pd.DataFrame)->pd.DataFrame:
+        """ Empirical Mode Decomposition receives a single vector of data and decomposes it into
+            Intrinsic Mode Functions (IMFs) which typically number in the 10-12 range. Each IMF
+            is a component of the original vector and all IMFs summed together necessarily equal the
+            original vector. The first IMF is the most rapid oscillation and the last IMF is the 
+            "residual" which may have no oscillations. 
+
+        Args:
+            df (pd.DataFrame): dataframe containing only one vector of time series data
+
+        Returns:
+            pd.DataFrame: original dataframe with new columns for each IMF
+        """
         imf = emd.sift.sift(df['Load'].values)
 
         for i in range(imf.shape[1]):
@@ -181,6 +224,13 @@ class RunTheJoules:
         
         
     def get_dat(self)->pd.DataFrame:
+        """ Read and preprocess load data. Resultant data will have a complete index and no bad
+            data such as NaNs of inf. Data should be mostly clean to begin with, especially no large
+            missing sections.
+
+        Returns:
+            pd.DataFrame: data with datetime index (not tz aware)
+        """
         usecols = [self.index_col,self.data_col]
         if self.persist_col is not None:
             usecols = usecols + [self.persist_col]
@@ -314,7 +364,19 @@ class RunTheJoules:
                         n_in:int,
                         n_out:int,
                         valid_split:int,
-                        batch_size:int,):#shift_steps=96, sequence_length=96*7*2):
+                        batch_size:int,):
+        """ Structure data for supervised learning
+
+        Args:
+            df (pd.DataFrame): data
+            n_in (int): input vector length
+            n_out (int): output vector length
+            valid_split (int): number of values to be used for validation
+            batch_size (int): number of input-output pairs per batch
+
+        Returns:
+            tuple: (n_x_signals, n_y_signals, train_generator, valid_data, y_scaler)
+        """
 
         # scalers
         x_scaler = MinMaxScaler()
@@ -391,6 +453,14 @@ class RunTheJoules:
         return (n_x_signals, n_y_signals, train_generator, valid_data, y_scaler)
     
     def organize_dat_test(self, df:pd.DataFrame):
+        """ Organize data for testing
+
+        Args:
+            df (pd.DataFrame): data
+
+        Returns:
+            np.array: array of x (input) data 
+        """
     
         x_scaler = load(open(self.results_dir + "x_scaler.pkl", 'rb'))
         
@@ -407,14 +477,42 @@ class RunTheJoules:
                       valid,
                       units_layers:list,
                       epochs:int, 
-                      patience=5,
+                      patience=10,
                       verbose=1,
-                      dropout=None,
+                      dropout:float=None,
                       afuncs={'lstm':'relu','dense':'sigmoid'},
                       learning_rate=1e-3,
                       loss='mse',
-                      batch_size=None,
-                      steps=None):
+                      batch_size=32,
+                      steps:int=None):
+        """ Define and train LSTM model
+
+        Args:
+            n_features_x (int): number of parallel vectors to be used as input
+            n_in (int): length of inputs
+            n_out (int): length of outputs
+            path_checkpoint (str): filename to save best model
+            train (Generator): generator object to produce training data
+            valid (np.array): validation data
+            units_layers (list of int): first number is the 1st layer units, second number is the
+                2nd layer units (can be 0 ie no 2nd layer)
+            epochs (int): maximum number of epochs to trian for
+            patience (int, optional): how many epochs to wait for validation to loss to decrease
+                before stopping training. Defaults to 10.
+            verbose (int 0-2, optional): how much output information to give while training. Defaults to 1.
+            dropout (float, optional): dropout value for each layer. Defaults to None.
+            afuncs (dict, optional): activation functions to use for the lstm and ann layers.
+                Defaults to {'lstm':'relu','dense':'sigmoid'}.
+            learning_rate (float, optional): adam initial learning rate. Defaults to 1e-3.
+            loss (str, optional): training loss function. Defaults to 'mse'.
+            batch_size (int, optional): number of input-output pairs in each training batch.
+                Defaults to 32.
+            steps (int, optional): alternative to defining batch_size, can define how many batches
+                to divide entire training data into. Defaults to None.
+
+        Returns:
+            tuple: (trained tf model, training history)
+        """
         
         model = Sequential()
         
@@ -507,16 +605,30 @@ class RunTheJoules:
                         callbacks=callbacks,
                         verbose=verbose)
 
-        return model, hx  
+        return (model, hx)
     
 
-    def get_callbacks(self, name_weights, patience_lr):
+    def get_callbacks(self, name_weights:str, patience_lr:float):
+        """ Callbacks to save best model and reduce learning rate on plateau
+
+        Args:
+            name_weights (str): filename for weights
+            patience_lr (float): patience learning rate
+
+        Returns:
+            list: model checkpoint save, reduced learnign rate
+        """
         mcp_save = ModelCheckpoint(name_weights, save_best_only=True, monitor='val_loss', mode='min')
         reduce_lr_loss = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=patience_lr, verbose=1, epsilon=1e-4, mode='min')
         return [mcp_save, reduce_lr_loss]
     
     
     def plot_training_history(self,hx):
+        """ Plot training history as epochs vs training loss and validation loss
+
+        Args:
+            hx (tf object): history from tf model training
+        """
         hx_loss = hx.history['loss']
         hx_val_loss = hx.history['val_loss']
         t = np.arange(len(hx_loss))
@@ -528,76 +640,6 @@ class RunTheJoules:
         plt.xlabel('Training Epoch')
         plt.title('Training History')     
         plt.show()
-
-    def plot_predictions_day(self,y_true, y_pred, y_pers_wk=None, day=0):
-        ppd = self.data_points_per_day
-        #ppw = ppd*7 # points per week
-        ppp = self.persist_calc_days *ppd
-        t = np.arange(ppd)
-
-        y_true_wk = y_true[(day+1)*ppd     :(day+2)*ppd    ]
-        y_pred_wk = y_pred[(day+1)*ppd     :(day+2)*ppd    ]
-        
-        if y_pers_wk is None:
-            y_pers_wk = y_true[(day+1)*ppd-ppp :(day+2)*ppd-ppp]
-
-        rmse_pers = np.sqrt(np.mean(np.square(y_pers_wk - y_true_wk)))
-        rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
-        skill = (rmse_pers - rmse_pred)/rmse_pers
-
-        plt.figure(figsize=(8,6))
-        plt.plot( t,y_true_wk,
-                            t,y_pers_wk,
-                            t,y_pred_wk)
-        
-        plt.legend([    'true',
-                                    f'persist {self.persist_calc_days}d (rmse {rmse_pers:.0f})', 
-                                    f'predict (rmse {rmse_pred:.0f})'])
-        
-        plt.title(f'test set week {day+1} of {int(len(y_true)/ppd)} '
-                            f'(skill {skill:.2})')
-        plt.show()    
-    
-    def plot_predictions_week(self,y_true, y_pers, y_pred, week=0):
-        ppd = self.data_points_per_day
-        ppw = ppd*7 # points per week
-        t = np.arange(ppw)
-
-        y_true_wk = y_true[(week+1)*ppw :(week+2)*ppw]
-        y_pers_wk = y_pers[(week+1)*ppw :(week+2)*ppw]
-        y_pred_wk = y_pred[(week+1)*ppw :(week+2)*ppw]
-
-        rmse_np1w = np.sqrt(np.mean(np.square(y_pers_wk - y_true_wk)))
-        rmse_pred = np.sqrt(np.mean(np.square(y_pred_wk - y_true_wk)))
-        skill = (rmse_np1w - rmse_pred)/rmse_np1w
-
-        plt.figure(figsize=(20,6))
-        plt.plot( t,y_true_wk,
-                            t,y_pers_wk,
-                            t,y_pred_wk)
-        
-        plt.legend([    'true',
-                                    f'persist {self.persist_calc_days}d (rmse {rmse_np1w:.0f})', 
-                                    f'predict (rmse {rmse_pred:.0f})'])
-        
-        plt.title(f'test set week {week+1} of {int(len(y_true)/ppw)} '
-                            f'(skill {skill:.2})')
-        plt.show()
-        
-        
-    def plot_one_prediction(self,model,x_test,y_test,n_in,n_out,begin=0):
-        
-        y_pred = model.predict(x_test[:,begin:begin+n_in,:])
-        
-        t_in = np.arange(n_in)
-        t_out = np.arange(n_in,n_in+n_out)
-        
-        for z in range(x_test.shape[2]):
-            plt.plot(t_in,x_test[0,begin:begin+n_in,z],label=f'x test f{z}')
-        plt.plot(t_out,y_test[0,begin:begin+n_out,0],label='y test')
-        plt.plot(t_out,y_pred[0,:n_out,0],'--',label='y pred')
-        plt.legend()
-        plt.show() 
     
             
     def run_them_fast(self,
@@ -615,6 +657,27 @@ class RunTheJoules:
                       valid_split:float=None,
                       batch_size:int=None,
                       loss:str=None):
+        """ Organize data, train, and save new model. All optional arguments are first defined
+            in config file but can be overridden here. 
+
+        Args:
+            units_layers (list, optional): Override LSTM layer 1 and 2 (can be 0) units. Defaults to None.
+            dropout (list, optional): Override both LSTM layer 1 and 2 dropout. Defaults to None.
+            features (str, optional): Override feature list. Defaults to None.
+            n_in (int, optional): Override length of input vector. Defaults to None.
+            n_out (int, optional): Override length of output vector. Defaults to None.
+            epochs (int, optional): Override max number of training epochs. Defaults to None.
+            patience (int, optional): Override nubmer of epochs to wait before stopping training. Defaults to None.
+            verbose (int 0-2, optional): Override tf training output. Defaults to None.
+            plots (bool, optional): Override plots on/off. Defaults to None.
+            test_split (float, optional): Override fraction of data for testing . Defaults to None.
+            valid_split (float, optional): Override fraction of data for validation. Defaults to None.
+            batch_size (int, optional): Override number of input-output pairs for each training batch. Defaults to None.
+            loss (str, optional): Override training loss function. Defaults to None.
+
+        Returns:
+            tf history object: training history
+        """
         
         if units_layers is not None:
             self.units_layers = units_layers
@@ -632,8 +695,6 @@ class RunTheJoules:
             self.patience = patience
         if plots is not None:
             self.plots = plots
-        if output is not None:
-            self.output = output
         if verbose is not None:
             self.verbose = verbose
         if test_split is not None:
@@ -693,12 +754,18 @@ class RunTheJoules:
         return history
 
     
-    def banana_clipper(self,
-                       t0:str=None,
-                       test_output=None,
-                       test_plots=None,
-                       limit=None,
-                       forecast_freq='1h'):  
+    def banana_clipper(self,t0:str=None,test_output=None,test_plots=None,limit=None,):  
+        """ Quickly test forecast on test data starting at t0
+
+        Args:
+            t0 (str, optional): Can specify a starting datetime. Defaults to None.
+            test_output (bool, optional): Can turn on/off each test forecast output. Defaults to None.
+            test_plots (bool, optional): Can tun on/off each test forecast plot. Defaults to None.
+            limit (int, optional): Can limit number of tests. Defaults to None.
+
+        Returns:
+            _type_: _description_
+        """
         
         if test_output is not None:
             self.test_output = test_output
@@ -830,6 +897,15 @@ class RunTheJoules:
         return skills.mean(), len(skills[skills>0])/len(skills)
     
     def random_search_warrant(self,units1:list,units2:list,dropout:list,n_in:list,features:list): 
+        """ Random search for best hyperparameters
+
+        Args:
+            units1 (list of int): all possible values for the first LSTM layer (cannot be 0)
+            units2 (list of int): all possible values for the second LSTM layer (can be 0)
+            dropout (list of float): all possible values for dropout (can be 0, typically < 0.3)
+            n_in (list of int): all possible lengths of input vector
+            features (list of str): all possible combinations of features
+        """
         main_results_dir = self.results_dir
         
         # what are the already completed models?
@@ -882,6 +958,8 @@ class RunTheJoules:
                 pass  
             
     def analyze_hyperparam_search(self):
+        """ Calculate best models from hyperparameter search
+        """
         dirs = next(os.walk(self.results_dir))[1]
         results = pd.DataFrame({'model':[],'mean_skill':[]})
         for d in dirs:
@@ -897,13 +975,13 @@ class RunTheJoules:
        
 if __name__ == '__main__':
      
-    model = RunTheJoules('jpl_ev.yaml')
+    jpl = RunTheJoules('jpl_ev.yaml')
     
-    h = model.run_them_fast()
+    h = jpl.run_them_fast()
 
-    model.banana_clipper()
+    jpl.banana_clipper()
 
-    # model.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
+    # jpl.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
     #                             [0,4,8,12,24,48,96,128,256], # units 2
     #                             [0, 0.1],#0,0.1] # dropout
     #                             [12,24,48,96,2*96,3*96], # n_in
@@ -915,4 +993,4 @@ if __name__ == '__main__':
     #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
     #                                 ])
     
-    #model.analyze_hyperparam_search()
+    #jpl.analyze_hyperparam_search()
