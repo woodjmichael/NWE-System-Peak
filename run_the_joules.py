@@ -651,7 +651,6 @@ class RunTheJoules:
                       epochs:int=None,
                       patience:int=None,
                       verbose:int=None,
-                      output:bool=None,
                       plots:bool=None,
                       test_split:float=None,
                       valid_split:float=None,
