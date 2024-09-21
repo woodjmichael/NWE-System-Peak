@@ -2,10 +2,10 @@
 # Edit at https://www.gitignore.io/?templates=macos
 
 sandbox.py
-results/
+#results/
 logs/
 models/
-data/
+#data/
 
 ### macOS ###
 # General
