@@ -1,4 +1,4 @@
-__version__ = 1.6
+__version__ = 1.7
 
 import os, sys, shutil
 
@@ -30,7 +30,7 @@ from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoa
 
 import emd
 
-print(tf.config.list_physical_devices('GPU'))
+print('GPU?',tf.config.list_physical_devices('GPU'))
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
 plt.style.use('dark_background')#'seaborn-whitegrid')
@@ -124,7 +124,7 @@ class Custom_Loss_Prices(tf.keras.losses.Loss):
         
 
 class RunTheJoules:
-    """_Define, train, hyperparamter optimze, and test a forecast algorithm based on:
+    """Define, train, hyperparamter optimze, and test a forecast algorithm based on:
             'Day Ahead Electric Load Forecast: A Comprehensive LSTM-EMD Methodology and Several
             Diverse Case Studies' by M. Wood in MDPI Forecasting (2023)
     """
@@ -144,16 +144,20 @@ class RunTheJoules:
         self.data_col = cfg.data_col
         self.persist_col = cfg.persist_col
         self.resample = cfg.resample
+        self.freq = cfg.resample
         self.remove_days=cfg.remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
         self.calendar_features = cfg.calendar_features
         self.model = None
         self.emd = cfg.emd
         self.df = self.get_dat()
         self.peak = self.df['Load'].max()
-        self.test_split = cfg.test_split
-        self.i_test_split = self.data_points_per_day*int((1-cfg.test_split)*(len(self.df)/self.data_points_per_day))
-        self.test_t0 = self.df.index[self.i_test_split]
-        self.train = self.df[:self.i_test_split]
+        # split test data on an integer number of days
+        self.test_fraction = cfg.test_fraction
+        self.train_len = int((1-self.test_fraction) * (len(self.df)/self.data_points_per_day)) \
+                        * self.data_points_per_day
+        self.test_len = len(self.df) - self.train_len
+        self.test_t0 = self.df.index[self.train_len]
+        self.test_tF = self.df.index[self.train_len+self.test_len-1]
         self.valid_split = cfg.valid_split
         self.units_layers = cfg.units_layers
         self.dropout = cfg.dropout
@@ -388,7 +392,12 @@ class RunTheJoules:
         
         # scale and adjust the length
         
-        x_data = x_scaler.fit_transform(df.values)[:-1*n_in]
+        if 'Persist' not in self.features:
+            df = self.df[self.features + ['Persist']]
+        else:
+            df = self.df[self.features]
+        
+        x_data = x_scaler.fit_transform(df.loc[self.features].values)[:-1*n_in]
         y_data = y_scaler.fit_transform(df_targets.values[:-1*n_in,np.newaxis]) 
         #y_data = np.expand_dims(y_data,axis=1)
         
@@ -473,8 +482,8 @@ class RunTheJoules:
                       n_in:int,
                       n_out:int,
                       path_checkpoint:str,
-                      train:Generator,
-                      valid,
+                      train_data:Generator,
+                      valid_data,
                       units_layers:list,
                       epochs:int, 
                       patience=10,
@@ -483,8 +492,7 @@ class RunTheJoules:
                       afuncs={'lstm':'relu','dense':'sigmoid'},
                       learning_rate=1e-3,
                       loss='mse',
-                      batch_size=32,
-                      steps:int=None):
+                      batch_size=32,):
         """ Define and train LSTM model
 
         Args:
@@ -492,8 +500,8 @@ class RunTheJoules:
             n_in (int): length of inputs
             n_out (int): length of outputs
             path_checkpoint (str): filename to save best model
-            train (Generator): generator object to produce training data
-            valid (np.array): validation data
+            train_data (Generator): generator object to produce training data
+            valid_data (np.array): validation data
             units_layers (list of int): first number is the 1st layer units, second number is the
                 2nd layer units (can be 0 ie no 2nd layer)
             epochs (int): maximum number of epochs to trian for
@@ -507,8 +515,6 @@ class RunTheJoules:
             loss (str, optional): training loss function. Defaults to 'mse'.
             batch_size (int, optional): number of input-output pairs in each training batch.
                 Defaults to 32.
-            steps (int, optional): alternative to defining batch_size, can define how many batches
-                to divide entire training data into. Defaults to None.
 
         Returns:
             tuple: (trained tf model, training history)
@@ -593,14 +599,11 @@ class RunTheJoules:
                     #callback_reduce_lr,
                     ]
 
-        if steps is None:
-            steps = (len(self.train) - n_in - n_out)//batch_size
-
-        hx = model.fit( x=train,
+        hx = model.fit( x=train_data,
                         epochs=epochs,
                         #batch_size=batch_size,
-                        steps_per_epoch=steps,
-                        validation_data=valid,
+                        steps_per_epoch=(self.train_len - n_in - n_out)//batch_size,
+                        validation_data=valid_data,
                         #validation_split=self.valid_split,
                         callbacks=callbacks,
                         verbose=verbose)
@@ -619,7 +622,8 @@ class RunTheJoules:
             list: model checkpoint save, reduced learnign rate
         """
         mcp_save = ModelCheckpoint(name_weights, save_best_only=True, monitor='val_loss', mode='min')
-        reduce_lr_loss = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=patience_lr, verbose=1, epsilon=1e-4, mode='min')
+        reduce_lr_loss = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=patience_lr, verbose=1, 
+                                           epsilon=1e-4, mode='min')
         return [mcp_save, reduce_lr_loss]
     
     
@@ -642,20 +646,20 @@ class RunTheJoules:
         plt.show()
     
             
-    def run_them_fast(self,
-                      units_layers:list=None,
-                      dropout:list=None,
-                      features:str=None,
-                      n_in:int=None,
-                      n_out:int=None,
-                      epochs:int=None,
-                      patience:int=None,
-                      verbose:int=None,
-                      plots:bool=None,
-                      test_split:float=None,
-                      valid_split:float=None,
-                      batch_size:int=None,
-                      loss:str=None):
+    def train(  self,
+                units_layers:list=None,
+                dropout:list=None,
+                features:str=None,
+                n_in:int=None,
+                n_out:int=None,
+                epochs:int=None,
+                patience:int=None,
+                verbose:int=None,
+                plots:bool=None,
+                valid_split:float=None,
+                batch_size:int=None,
+                loss:str=None,
+                test_i0:int=None):
         """ Organize data, train, and save new model. All optional arguments are first defined
             in config file but can be overridden here. 
 
@@ -669,10 +673,10 @@ class RunTheJoules:
             patience (int, optional): Override nubmer of epochs to wait before stopping training. Defaults to None.
             verbose (int 0-2, optional): Override tf training output. Defaults to None.
             plots (bool, optional): Override plots on/off. Defaults to None.
-            test_split (float, optional): Override fraction of data for testing . Defaults to None.
             valid_split (float, optional): Override fraction of data for validation. Defaults to None.
             batch_size (int, optional): Override number of input-output pairs for each training batch. Defaults to None.
             loss (str, optional): Override training loss function. Defaults to None.
+            test_i0 (int,optional): Override beginning of test data. Defaults to None.
 
         Returns:
             tf history object: training history
@@ -696,24 +700,25 @@ class RunTheJoules:
             self.plots = plots
         if verbose is not None:
             self.verbose = verbose
-        if test_split is not None:
-            self.test_split = test_split
         if valid_split is not None:
             self.valid_split = valid_split
         if batch_size is not None:
             self.batch_size = batch_size
         if loss is not None:
             self.loss = loss
-
+        if test_i0 is None:
+            test_t0 = self.test_t0
+            test_tF = self.test_tF
+        else:
+            test_t0 = self.df.index[test_i0]
+            test_tF = test_t0 + self.test_len*pd.Timedelta(self.freq) # t Final
+            
         
         #self.units = units
         #self.layers = layers
         units_layers = self.units_layers
-        units = units_layers
-        layers = len(units_layers)
         features = self.features
         dropout = self.dropout
-        test_split = self.test_split
         valid_split = self.valid_split
         batch_size = self.batch_size
         loss = self.loss
@@ -721,19 +726,26 @@ class RunTheJoules:
         verbose = self.verbose
         epochs = self.epochs
         patience = self.patience
+        # test_t0 = self.test_t0
+        # test_tF = test_t0 + self.test_len*pd.Timedelta(self.freq) # t Final
         
-        df = self.train[self.features]
+        test_idx = pd.date_range(test_t0,test_tF,freq=self.freq)[:-1]
+        train_data = self.df.loc[[x for x in self.df.index if x not in test_idx]]
         
         print(f'\n\n\n////////// units_layers={units_layers} dropout={dropout} n_in={self.n_in} loss={loss}//////////')
         print(f"\n////////// features = {', '.join(features)}//////////\n\n\n")
 
         # meta
-        y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
-        path_checkpoint = self.results_dir+ f'lstm.keras'
+        #y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
+
+        if test_i0 is None:
+            path_checkpoint = self.results_dir+ f'lstm.keras'
+        else:
+            path_checkpoint = self.results_dir+ f'lstm_{test_i0}.keras'
                 
         ( n_features_x, n_features_y, 
             train_gen, valid_data, 
-            scaler) = self.organize_dat_v4( df, self.n_in, self.n_out, valid_split, batch_size)
+            scaler) = self.organize_dat_v4( train_data, self.n_in, self.n_out, valid_split, batch_size)
 
         #(x_valid, y_valid) = dat_valid 
 
@@ -741,10 +753,19 @@ class RunTheJoules:
         #y_valid_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
 
         # model                                                
-        self.model, history = self.train_lstm_v6(  n_features_x, self.n_in, self.n_out, 
-                                    path_checkpoint, train_gen, valid_data,
-                                    units_layers, epochs,
-                                    patience, verbose, dropout,loss=loss,batch_size=batch_size)
+        self.model, history = self.train_lstm_v6(  n_features_x,
+                                                    self.n_in,
+                                                    self.n_out, 
+                                                    path_checkpoint,
+                                                    train_gen,
+                                                    valid_data,
+                                                    units_layers,
+                                                    epochs,
+                                                    patience, 
+                                                    verbose, 
+                                                    dropout,
+                                                    loss=loss,
+                                                    batch_size=batch_size)
 
         if plots is not None:
             if plots == 'hx':
@@ -753,7 +774,12 @@ class RunTheJoules:
         return history
 
     
-    def banana_clipper(self,t0:str=None,test_output=None,test_plots=None,limit=None,):  
+    def test(self,
+             t0:str=None,
+             test_output:bool=None,
+             test_plots:bool=None,
+             limit:int=None,
+             test_i0:int=None):  
         """ Quickly test forecast on test data starting at t0
 
         Args:
@@ -761,6 +787,7 @@ class RunTheJoules:
             test_output (bool, optional): Can turn on/off each test forecast output. Defaults to None.
             test_plots (bool, optional): Can tun on/off each test forecast plot. Defaults to None.
             limit (int, optional): Can limit number of tests. Defaults to None.
+            test_i0 (int, optional): Index where test set starts. Defaults to None.
 
         Returns:
             _type_: _description_
@@ -793,11 +820,15 @@ class RunTheJoules:
         #print(df.columns);sys.exit()
 
         y_scaler = load(open(self.results_dir + "y_scaler.pkl", 'rb')) 
+        if test_i0 is None:
+            lstm_filename = self.results_dir + f'lstm.keras'
+        else:
+            lstm_filename = self.results_dir + f'lstm_{test_i0}.keras'
         if self.loss == 'custom':
-            model = tf.keras.models.load_model(self.results_dir+"lstm.keras",
+            model = tf.keras.models.load_model(lstm_filename,
                                                 custom_objects={'Custom_Loss_Prices':Custom_Loss_Prices,})
         else:
-            model = tf.keras.models.load_model(self.results_dir+"lstm.keras")
+            model = tf.keras.models.load_model(lstm_filename)
         
         times = []
         skills_mae,maes_pers,maes_lstm = [],[],[]
@@ -895,7 +926,7 @@ class RunTheJoules:
 
         return skills.mean(), len(skills[skills>0])/len(skills)
     
-    def random_search_warrant(self,units1:list,units2:list,dropout:list,n_in:list,features:list): 
+    def tune_hyperparameters(self,units1:list,units2:list,dropout:list,n_in:list,features:list): 
         """ Random search for best hyperparameters
 
         Args:
@@ -943,16 +974,16 @@ class RunTheJoules:
                 
                 if not os.path.exists(self.results_dir):
                     os.mkdir(self.results_dir)
-                h = self.run_them_fast(units_layers=[s.u1,s.u2],
+                h = self.train(units_layers=[s.u1,s.u2],
                                             dropout=[s.d]*2,
                                             n_in=s.n,
                                             features=s.f)
-                mean_skill, positive_skills = self.banana_clipper()
+                mean_skill, positive_skills = self.test()
                 r = {'mean_skill':mean_skill,'positive_skills':positive_skills,'epochs':len(h['loss'])}
                 s.update(r)
                 results.loc[len(results)] = s
                 results.to_csv(main_results_dir+'/results.csv')
-                model.analyze_hyperparam_search()
+                self.analyze_hyperparam_search()
             except:
                 pass  
             
@@ -976,11 +1007,15 @@ if __name__ == '__main__':
      
     jpl = RunTheJoules('jpl_ev.yaml')
     
-    h = jpl.run_them_fast()
+    hx = jpl.train()
+    jpl.test()
+    
+    #k = jpl.test_len
+    #for i in range(int(1/jpl.test_fraction)):
+    #history = jpl.train(test_i0=0*k)
+    #jpl.test(test_i0=0*k)
 
-    jpl.banana_clipper()
-
-    # jpl.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
+    # jpl.tune_hyperparameters([4,8,12,24,48,96,128,256], # units 1
     #                             [0,4,8,12,24,48,96,128,256], # units 2
     #                             [0, 0.1],#0,0.1] # dropout
     #                             [12,24,48,96,2*96,3*96], # n_in
@@ -991,5 +1026,3 @@ if __name__ == '__main__':
     #                                 #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
     #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
     #                                 ])
-    
-    #jpl.analyze_hyperparam_search()
