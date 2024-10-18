@@ -38,7 +38,7 @@ valid_split: 0.2
 loss: mse
 
 # test
-test_fraction: 0.1
+test_split: 0.1
 forecast_freq: 1d # 1h or 1d
 test_plots: False
 test_output: True
