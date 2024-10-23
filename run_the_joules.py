@@ -1,4 +1,4 @@
-__version__ = 1.7
+__version__ = 1.8
 
 import os, sys, shutil
 
@@ -33,7 +33,6 @@ import emd
 print('GPU?',tf.config.list_physical_devices('GPU'))
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-plt.style.use('dark_background')#'seaborn-whitegrid')
 
 #pd.set_option('precision', 2)
 pd.options.display.float_format = '{:.2f}'.format
@@ -124,7 +123,7 @@ class Custom_Loss_Prices(tf.keras.losses.Loss):
         
 
 class RunTheJoules:
-    """Define, train, hyperparamter optimze, and test a forecast algorithm based on:
+    """_Define, train, hyperparamter optimze, and test a forecast algorithm based on:
             'Day Ahead Electric Load Forecast: A Comprehensive LSTM-EMD Methodology and Several
             Diverse Case Studies' by M. Wood in MDPI Forecasting (2023)
     """
@@ -134,36 +133,49 @@ class RunTheJoules:
         assert cfg.version == __version__
         self.config = cfg
         self.site = cfg.site
-        self.persist_calc_days = cfg.persist_calc_days
-        self.data_points_per_day = None
-        self.persist_lag = None
         self.results_dir = cfg.results_dir+cfg.site+'/'
         self.clean_dir = cfg.clean_dir
+        
         self.filename = cfg.filename
+        self.data_points_per_day = None
         self.index_col = cfg.index_col
-        self.data_col = cfg.data_col
-        self.persist_col = cfg.persist_col
-        self.resample = cfg.resample
-        self.freq = cfg.resample
-        self.remove_days=cfg.remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
+        self.target_col = cfg.target_col
+        self.benchmark_col = cfg.benchmark_col
+        self.usecols = [cfg.index_col, cfg.target_col]
+        self.usecols += cfg.benchmark_col if cfg.benchmark_col is not None else []
+        self.usecols += cfg.feature_cols if cfg.feature_cols is not None else []
         self.calendar_features = cfg.calendar_features
-        self.model = None
-        self.emd = cfg.emd
+        self.imf_features = cfg.imf_features
+        
+        self.benchmark_persist_days = cfg.benchmark_persist_days
+        
+        self.resample = cfg.resample
+        self.remove_days=cfg.remove_days # 'weekdays', 'weekdays', or list of ints (0=mon, .., 6=sun)
+        if self.imf_features is not None or self.search:
+            self.emd = True
+        
         self.df = self.get_dat()
-        self.peak = self.df['Load'].max()
-        # split test data on an integer number of days
-        self.test_fraction = cfg.test_fraction
-        self.train_len = int((1-self.test_fraction) * (len(self.df)/self.data_points_per_day)) \
+        self.peak = self.df.Load.max()
+        self.test_split = cfg.test_split
+        self.train_len = int((1-self.test_split) * (len(self.df)/self.data_points_per_day)) \
                         * self.data_points_per_day
+        
         self.test_len = len(self.df) - self.train_len
         self.test_t0 = self.df.index[self.train_len]
         self.test_tF = self.df.index[self.train_len+self.test_len-1]
+        
+        self.i_test_split = self.data_points_per_day*int((1-self.test_split)*(len(self.df)/self.data_points_per_day))
+        self.test_t0 = self.df.index[self.i_test_split]
+        self.train = self.df[:self.i_test_split]
+        
         self.valid_split = cfg.valid_split
         self.units_layers = cfg.units_layers
         self.dropout = cfg.dropout
-        self.n_in = cfg.n_in
-        self.n_out = cfg.n_out
-        self.features = cfg.features + [f'{cfg.features_list_name}{i}' for i in cfg.features_list_numbers]
+        self.n_in =  int(cfg.input_length * self.data_points_per_day)
+        self.n_out = int(cfg.output_length * self.data_points_per_day)
+        self.features = ['Load']
+        self.features += cfg.features if cfg.features is not None else []
+        self.features += [f'IMF{n}' for n in cfg.imf_features] if cfg.imf_features is not None else []
         self.loss = cfg.loss
         self.epochs = cfg.epochs
         self.patience = cfg.patience
@@ -173,6 +185,13 @@ class RunTheJoules:
         self.test_output = cfg.test_output
         self.batch_size = cfg.batch_size
         self.forecast_freq = cfg.forecast_freq
+        
+        self.search = cfg.search
+        self.units1 = cfg.units1
+        self.units2 = cfg.units2
+        self.dropout = cfg.dropout
+        self.input_lengths = cfg.input_lengths
+        self.features_2D = [['Load']+x for x in cfg.features_2D]
         
         if not os.path.exists(self.results_dir):
             os.mkdir(self.results_dir)
@@ -184,6 +203,9 @@ class RunTheJoules:
 
         shutil.copyfile(os.path.basename(__file__), self.results_dir+os.path.basename(__file__))
         shutil.copyfile(config_file, self.results_dir+config_file)
+        
+        if cfg.plot_style is not None:
+            plt.style.use(cfg.plot_style)
         
         
     def min_max_scaler(self,df:pd.DataFrame)->pd.DataFrame:
@@ -235,16 +257,16 @@ class RunTheJoules:
         Returns:
             pd.DataFrame: data with datetime index (not tz aware)
         """
-        usecols = [self.index_col,self.data_col]
-        if self.persist_col is not None:
-            usecols = usecols + [self.persist_col]
-        
         df = pd.read_csv(self.filename,     
                             comment='#',
                             parse_dates=True,
-                            index_col=usecols[0],
-                            #usecols=usecols
+                            index_col=self.usecols[0],
+                            usecols=self.usecols
                             )
+        
+        df = df.rename(columns = {self.target_col:'Load'})
+        if self.benchmark_col is not None:
+            df = df.rename(columns = {self.benchmark_col:'Benchmark'})
         
         df = df.ffill().bfill()
         
@@ -253,30 +275,21 @@ class RunTheJoules:
         
         interval_min = int(df.index.to_series().diff().mode()[0].seconds/60)
         self.data_points_per_day = int(1440/interval_min)
-        if self.persist_calc_days:
-            self.persist_lag = self.persist_calc_days * self.data_points_per_day
-            if self.persist_col is None and 'Persist' not in df.columns:
-                df['Persist'] = df['Load'].shift(self.persist_lag)
+        
+        if self.benchmark_persist_days and self.benchmark_col is None:
+            self.persist_lag = self.benchmark_persist_days * self.data_points_per_day
+            df['Benchmark'] = df.Load.shift(self.persist_lag)
         
         # drop units from any column headers
-        df.columns = [x.split('[')[0] for x in df.columns]
+        df.columns = [x.split('[')[0] for x in df.columns] # yes these lines are different
         df.columns = [x.split('(')[0] for x in df.columns]
-
-        # df = df.rename(columns = {self.data_col:'Load'})
-        # if self.persist_col is None:
-        #     df['Persist'] = df['Load'].shift(self.persist_lag)
-        # else:
-        #     df = df.rename(columns = {self.persist_col:'Persist'})
             
         df['Weekday'] = df.index.weekday
 
         #df = df.tz_localize('Etc/GMT+8',ambiguous='infer') # or 'US/Eastern' but no 'US/Pacific'
-
         #df = df.tz_convert(None)
-        df = df.ffill().bfill()        
         
-        # if self.resample != False:
-        #     df = df.resample(self.resample).mean()
+        df = df.ffill().bfill()        
         
         if self.remove_days is not None:
             if self.remove_days == 'weekends':
@@ -297,15 +310,13 @@ class RunTheJoules:
             df['Day'] = df.index.dayofyear
             df['Hour'] = df.index.hour
             df['Weekday'] = df.index.dayofweek
-        
-        #df['Persist'] = df['Load'].shift(self.persist_lag)
     
         df = df.ffill().bfill()
 
         return df
     
     
-    def batch_generator_v3( self,
+    def train_batch_generator( self,
                               batch_size:int,
                               n_in:int,
                               n_out:int,
@@ -314,7 +325,7 @@ class RunTheJoules:
                               n_samples:int,
                               x:int,
                               y:int,
-                              randomize=True,
+                              randomize=False,
                               daily=False):
         """
         Generator function for creating random batches of training-data.
@@ -363,16 +374,19 @@ class RunTheJoules:
                 yield (x_batch, y_batch)
 
     
-    def organize_dat_v4(self,
+    def organize_data(self,
                         df:pd.DataFrame,
+                        features:list,
                         n_in:int,
                         n_out:int,
                         valid_split:int,
-                        batch_size:int,):
+                        batch_size:int,
+                        randomize:bool=False):
         """ Structure data for supervised learning
 
         Args:
             df (pd.DataFrame): data
+            features (list): list of features to be used as input  
             n_in (int): input vector length
             n_out (int): output vector length
             valid_split (int): number of values to be used for validation
@@ -387,20 +401,12 @@ class RunTheJoules:
         y_scaler = MinMaxScaler()
         
         # shift for forecast
-        #shift_steps = 1 * 24 * 4    # Number of time steps
-        df_targets = df['Load'].shift(-1*n_in)
+        df_features = df[features]
+        df_targets = df['Load'].shift(-1*n_in) # confirm that n_in is correct not n_out (2023.10.23)
         
         # scale and adjust the length
-        
-        if 'Persist' not in self.features:
-            df = self.df[self.features + ['Persist']]
-        else:
-            df = self.df[self.features]
-        
-        x_data = x_scaler.fit_transform(df.loc[self.features].values)[:-1*n_in]
-        y_data = y_scaler.fit_transform(df_targets.values[:-1*n_in,np.newaxis]) 
-        #y_data = np.expand_dims(y_data,axis=1)
-        
+        x_data = x_scaler.fit_transform(df_features.values[:-1*n_in]) 
+        y_data = y_scaler.fit_transform(df_targets.values[:-1*n_in,np.newaxis])          
         
         dump(x_scaler, open(self.results_dir + "x_scaler.pkl", 'wb'))
         dump(y_scaler, open(self.results_dir + "y_scaler.pkl", 'wb'))
@@ -420,7 +426,7 @@ class RunTheJoules:
         n_x_signals = x_data.shape[1]
         n_y_signals = y_data.shape[1]
 
-        train_generator = self.batch_generator_v3(batch_size,
+        train_generator = self.train_batch_generator(batch_size,
                                             n_in,
                                             n_out, 
                                             n_x_signals,
@@ -429,7 +435,7 @@ class RunTheJoules:
                                             x_train,
                                             y_train)
 
-        randomize=False
+        
         n_samples = x_valid.shape[0]
         batch_size = x_valid.shape[0] - n_in - n_out
 
@@ -455,17 +461,16 @@ class RunTheJoules:
         
         valid_data = (x_batch,y_batch)
 
-        
-
         #valid_data = ( np.expand_dims(x_valid, axis=0),np.expand_dims(y_valid, axis=0)) 
         
         return (n_x_signals, n_y_signals, train_generator, valid_data, y_scaler)
     
-    def organize_dat_test(self, df:pd.DataFrame):
+    def organize_data_test(self, df:pd.DataFrame,features:list):
         """ Organize data for testing
 
         Args:
             df (pd.DataFrame): data
+            features: list of features to be used as input
 
         Returns:
             np.array: array of x (input) data 
@@ -473,17 +478,17 @@ class RunTheJoules:
     
         x_scaler = load(open(self.results_dir + "x_scaler.pkl", 'rb'))
         
-        x_test = x_scaler.transform(df.values)
+        x_test = x_scaler.transform(df[features].values)
 
         return np.expand_dims(x_test, axis=0)
     
-    def train_lstm_v6(self,
+    def build_and_train_lstm(self,
                       n_features_x:int,
                       n_in:int,
                       n_out:int,
                       path_checkpoint:str,
-                      train_data:Generator,
-                      valid_data,
+                      train:Generator,
+                      valid,
                       units_layers:list,
                       epochs:int, 
                       patience=10,
@@ -492,7 +497,8 @@ class RunTheJoules:
                       afuncs={'lstm':'relu','dense':'sigmoid'},
                       learning_rate=1e-3,
                       loss='mse',
-                      batch_size=32,):
+                      batch_size=32,
+                      steps:int=None):
         """ Define and train LSTM model
 
         Args:
@@ -500,8 +506,8 @@ class RunTheJoules:
             n_in (int): length of inputs
             n_out (int): length of outputs
             path_checkpoint (str): filename to save best model
-            train_data (Generator): generator object to produce training data
-            valid_data (np.array): validation data
+            train (Generator): generator object to produce training data
+            valid (np.array): validation data
             units_layers (list of int): first number is the 1st layer units, second number is the
                 2nd layer units (can be 0 ie no 2nd layer)
             epochs (int): maximum number of epochs to trian for
@@ -515,6 +521,8 @@ class RunTheJoules:
             loss (str, optional): training loss function. Defaults to 'mse'.
             batch_size (int, optional): number of input-output pairs in each training batch.
                 Defaults to 32.
+            steps (int, optional): alternative to defining batch_size, can define how many batches
+                to divide entire training data into. Defaults to None.
 
         Returns:
             tuple: (trained tf model, training history)
@@ -599,11 +607,14 @@ class RunTheJoules:
                     #callback_reduce_lr,
                     ]
 
-        hx = model.fit( x=train_data,
+        if steps is None:
+            steps = (len(self.train) - n_in - n_out)//batch_size
+
+        hx = model.fit( x=train,
                         epochs=epochs,
                         #batch_size=batch_size,
-                        steps_per_epoch=(self.train_len - n_in - n_out)//batch_size,
-                        validation_data=valid_data,
+                        steps_per_epoch=steps,
+                        validation_data=valid,
                         #validation_split=self.valid_split,
                         callbacks=callbacks,
                         verbose=verbose)
@@ -622,8 +633,7 @@ class RunTheJoules:
             list: model checkpoint save, reduced learnign rate
         """
         mcp_save = ModelCheckpoint(name_weights, save_best_only=True, monitor='val_loss', mode='min')
-        reduce_lr_loss = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=patience_lr, verbose=1, 
-                                           epsilon=1e-4, mode='min')
+        reduce_lr_loss = ReduceLROnPlateau(monitor='loss', factor=0.1, patience=patience_lr, verbose=1, epsilon=1e-4, mode='min')
         return [mcp_save, reduce_lr_loss]
     
     
@@ -646,20 +656,20 @@ class RunTheJoules:
         plt.show()
     
             
-    def train(  self,
-                units_layers:list=None,
-                dropout:list=None,
-                features:str=None,
-                n_in:int=None,
-                n_out:int=None,
-                epochs:int=None,
-                patience:int=None,
-                verbose:int=None,
-                plots:bool=None,
-                valid_split:float=None,
-                batch_size:int=None,
-                loss:str=None,
-                test_i0:int=None):
+    def organize_data_and_train(self,
+                      units_layers:list=None,
+                      dropout:list=None,
+                      features:str=None,
+                      n_in:int=None,
+                      n_out:int=None,
+                      epochs:int=None,
+                      patience:int=None,
+                      verbose:int=None,
+                      plots:bool=None,
+                      test_split:float=None,
+                      valid_split:float=None,
+                      batch_size:int=None,
+                      loss:str=None):
         """ Organize data, train, and save new model. All optional arguments are first defined
             in config file but can be overridden here. 
 
@@ -673,79 +683,41 @@ class RunTheJoules:
             patience (int, optional): Override nubmer of epochs to wait before stopping training. Defaults to None.
             verbose (int 0-2, optional): Override tf training output. Defaults to None.
             plots (bool, optional): Override plots on/off. Defaults to None.
+            test_split (float, optional): Override fraction of data for testing . Defaults to None.
             valid_split (float, optional): Override fraction of data for validation. Defaults to None.
             batch_size (int, optional): Override number of input-output pairs for each training batch. Defaults to None.
             loss (str, optional): Override training loss function. Defaults to None.
-            test_i0 (int,optional): Override beginning of test data. Defaults to None.
 
         Returns:
             tf history object: training history
         """
+
+        units_layers = units_layers if units_layers is not None else self.units_layers
+        features = features if features is not None else self.features
+        dropout = dropout if dropout is not None else self.dropout
+        valid_split = valid_split if valid_split is not None else self.valid_split
+        batch_size = batch_size if batch_size is not None else self.batch_size
+        loss = loss if loss is not None else self.loss
+        plots = plots if plots is not None else self.plots
+        verbose = verbose if verbose is not None else self.verbose
+        epochs = epochs if epochs is not None else self.epochs
+        patience = patience if patience is not None else self.patience
+        n_in = n_in if n_in is not None else self.n_in
+        n_out = n_out if n_out is not None else self.n_out
+        test_split = test_split if test_split is not None else self.test_split
         
-        if units_layers is not None:
-            self.units_layers = units_layers
-        if dropout is not None:
-            self.dropout = dropout
-        if features is not None:
-            self.features = features
-        if n_in is not None:
-            self.n_in = n_in
-        if n_out is not None:
-            self.n_out = n_out
-        if epochs is not None:
-            self.epochs = epochs
-        if patience is not None:
-            self.patience = patience
-        if plots is not None:
-            self.plots = plots
-        if verbose is not None:
-            self.verbose = verbose
-        if valid_split is not None:
-            self.valid_split = valid_split
-        if batch_size is not None:
-            self.batch_size = batch_size
-        if loss is not None:
-            self.loss = loss
-        if test_i0 is None:
-            test_t0 = self.test_t0
-            test_tF = self.test_tF
-        else:
-            test_t0 = self.df.index[test_i0]
-            test_tF = test_t0 + self.test_len*pd.Timedelta(self.freq) # t Final
-            
+        df = self.train[['Benchmark']+features]
         
-        #self.units = units
-        #self.layers = layers
-        units_layers = self.units_layers
-        features = self.features
-        dropout = self.dropout
-        valid_split = self.valid_split
-        batch_size = self.batch_size
-        loss = self.loss
-        plots = self.plots
-        verbose = self.verbose
-        epochs = self.epochs
-        patience = self.patience
-        # test_t0 = self.test_t0
-        # test_tF = test_t0 + self.test_len*pd.Timedelta(self.freq) # t Final
-        
-        test_idx = pd.date_range(test_t0,test_tF,freq=self.freq)[:-1]
-        train_data = self.df.loc[[x for x in self.df.index if x not in test_idx]]
-        
-        print(f'\n\n\n////////// units_layers={units_layers} dropout={dropout} n_in={self.n_in} loss={loss}//////////')
+        print(f'\n\n\n////////// units_layers={units_layers} dropout={dropout} n_in={n_in} loss={loss}//////////')
         print(f"\n////////// features = {', '.join(features)}//////////\n\n\n")
 
         # meta
-        #y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
-
-        if test_i0 is None:
-            path_checkpoint = self.results_dir+ f'lstm.keras'
-        else:
-            path_checkpoint = self.results_dir+ f'lstm_{test_i0}.keras'
+        y, m, d = datetime.now().year-2000, datetime.now().month, datetime.now().day
+        path_checkpoint = self.results_dir+ f'lstm.keras'
                 
         ( n_features_x, n_features_y, 
             train_gen, valid_data, 
-            scaler) = self.organize_dat_v4( train_data, self.n_in, self.n_out, valid_split, batch_size)
+            scaler) = self.organize_data( df, features, n_in, n_out, valid_split, batch_size)
 
         #(x_valid, y_valid) = dat_valid 
 
@@ -753,19 +725,10 @@ class RunTheJoules:
         #y_valid_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
 
         # model                                                
-        self.model, history = self.train_lstm_v6(  n_features_x,
-                                                    self.n_in,
-                                                    self.n_out, 
-                                                    path_checkpoint,
-                                                    train_gen,
-                                                    valid_data,
-                                                    units_layers,
-                                                    epochs,
-                                                    patience, 
-                                                    verbose, 
-                                                    dropout,
-                                                    loss=loss,
-                                                    batch_size=batch_size)
+        self.model, history = self.build_and_train_lstm(  n_features_x, n_in, n_out, 
+                                    path_checkpoint, train_gen, valid_data,
+                                    units_layers, epochs,
+                                    patience, verbose, dropout,loss=loss,batch_size=batch_size)
 
         if plots is not None:
             if plots == 'hx':
@@ -774,12 +737,7 @@ class RunTheJoules:
         return history
 
     
-    def test(self,
-             t0:str=None,
-             test_output:bool=None,
-             test_plots:bool=None,
-             limit:int=None,
-             test_i0:int=None):  
+    def test(self,t0:str=None,test_output=None,test_plots=None,limit=None,features=None):  
         """ Quickly test forecast on test data starting at t0
 
         Args:
@@ -787,7 +745,6 @@ class RunTheJoules:
             test_output (bool, optional): Can turn on/off each test forecast output. Defaults to None.
             test_plots (bool, optional): Can tun on/off each test forecast plot. Defaults to None.
             limit (int, optional): Can limit number of tests. Defaults to None.
-            test_i0 (int, optional): Index where test set starts. Defaults to None.
 
         Returns:
             _type_: _description_
@@ -797,6 +754,9 @@ class RunTheJoules:
             self.test_output = test_output
         if test_plots is not None:
             self.test_plots = test_plots
+            
+        features = features if features is not None else self.features
+        
         output = self.test_output
         plots = self.test_plots
 
@@ -812,23 +772,19 @@ class RunTheJoules:
 
         #print(self.features);print(self.df.columns)
         
-        if 'Persist' not in self.features:
-            df = self.df[self.features + ['Persist']]
-        else:
-            df = self.df[self.features]
+        # if 'Persist' not in self.features:
+        #     df = self.df[self.features + ['Persist']]
+        # else:
+        df = self.df[['Benchmark']+self.features]
             
         #print(df.columns);sys.exit()
 
         y_scaler = load(open(self.results_dir + "y_scaler.pkl", 'rb')) 
-        if test_i0 is None:
-            lstm_filename = self.results_dir + f'lstm.keras'
-        else:
-            lstm_filename = self.results_dir + f'lstm_{test_i0}.keras'
         if self.loss == 'custom':
-            model = tf.keras.models.load_model(lstm_filename,
+            model = tf.keras.models.load_model(self.results_dir+"lstm.keras",
                                                 custom_objects={'Custom_Loss_Prices':Custom_Loss_Prices,})
         else:
-            model = tf.keras.models.load_model(lstm_filename)
+            model = tf.keras.models.load_model(self.results_dir+"lstm.keras")
         
         times = []
         skills_mae,maes_pers,maes_lstm = [],[],[]
@@ -853,10 +809,10 @@ class RunTheJoules:
             
             if self.test_output:print(t)
 
-            x = df.loc[:t-pd.Timedelta('15min'),self.features][-1*self.n_in:].copy()
+            x = df.loc[:t-pd.Timedelta('15min'),self.features+['Benchmark']][-1*self.n_in:].copy()
             
             y_true = df.loc[t:,'Load'][:self.n_out].copy()
-            y_pers = df.loc[t:,'Persist'][:self.n_out].copy()
+            y_pers = df.loc[t:,'Benchmark'][:self.n_out].copy()
             
             mae_pers = (y_true-y_pers).abs().mean()
             mape_pers = ((y_true - y_pers).abs() / y_true).mean()
@@ -868,7 +824,7 @@ class RunTheJoules:
                 if output:
                     print ('\nWeekday doesnt exist in training data')
             else:
-                x_test = self.organize_dat_test(x)
+                x_test = self.organize_data_test(x,features)
                 
                 y_pred = model.predict(x_test[:,-1*self.n_in:,:])
                 
@@ -926,7 +882,12 @@ class RunTheJoules:
 
         return skills.mean(), len(skills[skills>0])/len(skills)
     
-    def tune_hyperparameters(self,units1:list,units2:list,dropout:list,n_in:list,features:list): 
+    def hyperparam_search(self,
+                          units1:list=None,
+                          units2:list=None,
+                          dropout:list=None,
+                          n_in:list=None,
+                          features:list=None): 
         """ Random search for best hyperparameters
 
         Args:
@@ -936,6 +897,15 @@ class RunTheJoules:
             n_in (list of int): all possible lengths of input vector
             features (list of str): all possible combinations of features
         """
+        if self.search is not True:
+            sys.exit()
+            
+        if units1 is None: units1 = self.units1
+        if units2 is None: units2 = self.units2
+        if dropout is None: dropout = self.dropout
+        if n_in is None: n_in = [x * self.data_points_per_day for x in self.input_lengths]
+        if features is None: features = self.features_2D
+            
         main_results_dir = self.results_dir
         
         # what are the already completed models?
@@ -962,26 +932,27 @@ class RunTheJoules:
                     for n in n_in:
                         for f in features:
                             search_space.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
-        shuffle(search_space)
+        #shuffle(search_space)
         
         
         # walk through search space
-        results = pd.DataFrame(columns=['units1','units2','dropout','n_in','features','mean_skill',
+        results = pd.DataFrame(columns=['u1','u2','d','n','fs','mean_skill',
                                         'positive_skills','epochs'])        
         for s in [x for x in search_space if x not in search_space_completed]: # exlude existing 
             try:                
-                self.results_dir = main_results_dir + f'u{s.u1}-{s.u2}_d{s.d}_in{s.n}_flen{len(s.f)}/'
+                self.results_dir = main_results_dir + f'u{s.u1}-{s.u2}_d{s.d}_in{s.n}_fs{len(s.f)}/'
                 
                 if not os.path.exists(self.results_dir):
                     os.mkdir(self.results_dir)
-                h = self.train(units_layers=[s.u1,s.u2],
+                h = self.organize_data_and_train(units_layers=[s.u1,s.u2],
                                             dropout=[s.d]*2,
                                             n_in=s.n,
                                             features=s.f)
-                mean_skill, positive_skills = self.test()
-                r = {'mean_skill':mean_skill,'positive_skills':positive_skills,'epochs':len(h['loss'])}
+                mean_skill, positive_skills = self.test(features=s.f)
+                r = {'mean_skill':mean_skill,'positive_skills':positive_skills,'epochs':len(h.history['loss'])}
                 s.update(r)
-                results.loc[len(results)] = s
+                s['fs'] = len(s.f)
+                results.loc[len(results)] = [s.u1,s.u2,s.d,s.n,s.fs,s.mean_skill,s.positive_skills,s.epochs]
                 results.to_csv(main_results_dir+'/results.csv')
                 self.analyze_hyperparam_search()
             except:
@@ -1007,22 +978,8 @@ if __name__ == '__main__':
      
     jpl = RunTheJoules('jpl_ev.yaml')
     
-    hx = jpl.train()
+    h = jpl.organize_data_and_train()
+
     jpl.test()
     
-    #k = jpl.test_len
-    #for i in range(int(1/jpl.test_fraction)):
-    #history = jpl.train(test_i0=0*k)
-    #jpl.test(test_i0=0*k)
-
-    # jpl.tune_hyperparameters([4,8,12,24,48,96,128,256], # units 1
-    #                             [0,4,8,12,24,48,96,128,256], # units 2
-    #                             [0, 0.1],#0,0.1] # dropout
-    #                             [12,24,48,96,2*96,3*96], # n_in
-    #                             [   ['Load','Persist1Workday'], # features
-    #                                 #['Load','Persist','temp'],
-    #                                 ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
-    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
-    #                                 #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
-    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
-    #                                 ])
+    jpl.hyperparam_search()
