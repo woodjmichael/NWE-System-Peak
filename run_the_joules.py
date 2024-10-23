@@ -187,6 +187,7 @@ class RunTheJoules:
         self.forecast_freq = cfg.forecast_freq
         
         self.search = cfg.search
+        self.continue_search = cfg.continue_search
         self.units1 = cfg.units1
         self.units2 = cfg.units2
         self.dropout = cfg.dropout
@@ -702,7 +703,7 @@ class RunTheJoules:
         verbose = verbose if verbose is not None else self.verbose
         epochs = epochs if epochs is not None else self.epochs
         patience = patience if patience is not None else self.patience
-        n_in = n_in if n_in is not None else self.n_in
+        n_in = int(n_in) if n_in is not None else self.n_in
         n_out = n_out if n_out is not None else self.n_out
         test_split = test_split if test_split is not None else self.test_split
         
@@ -910,19 +911,20 @@ class RunTheJoules:
         
         # what are the already completed models?
         search_space_completed = []
-        files = next(os.walk(main_results_dir))[1]
-        for s in files:
-            u1 = int( s.split('_')[0][1:].split('-')[0] )
-            u2 = int( s.split('_')[0][1:].split('-')[1] )
-            d = float( s.split('_')[1][1:] )
-            n = int( s.split('_')[2][2:] )
-            flen = int( s.split('_')[3][4:] )
-            f = ['Load']
-            if flen == 5:
-                f = f + [f'IMF{x}' for x in [4,5,6,9]]
-            if flen == 13:
-                f = f + [f'IMF{x}' for x in range(1,13)]
-            search_space_completed.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
+        if self.continue_search:
+            files = next(os.walk(main_results_dir))[1]
+            for s in files:
+                u1 = int( s.split('_')[0][1:].split('-')[0] )
+                u2 = int( s.split('_')[0][1:].split('-')[1] )
+                d = float( s.split('_')[1][1:] )
+                n = int( s.split('_')[2][2:] )
+                flen = int( s.split('_')[3][4:] )
+                f = ['Load']
+                if flen == 5:
+                    f = f + [f'IMF{x}' for x in [4,5,6,9]]
+                if flen == 13:
+                    f = f + [f'IMF{x}' for x in range(1,13)]
+                search_space_completed.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
                                         
         # build search space
         search_space = []
@@ -932,7 +934,7 @@ class RunTheJoules:
                     for n in n_in:
                         for f in features:
                             search_space.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
-        #shuffle(search_space)
+        shuffle(search_space)
         
         
         # walk through search space
@@ -978,8 +980,8 @@ if __name__ == '__main__':
      
     jpl = RunTheJoules('jpl_ev.yaml')
     
-    h = jpl.organize_data_and_train()
+    #h = jpl.organize_data_and_train()
 
-    jpl.test()
+    #jpl.test()
     
     jpl.hyperparam_search()

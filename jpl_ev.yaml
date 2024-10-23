@@ -3,11 +3,11 @@ version: 1.8
 # any config here can be overwriteen by code
 
 # data
-site: jpl_ev_TEST
+site: jpl_ev
 filename: data/all_JPL_v5.csv
 index_col: Datetime
 target_col: Load
-feature_cols: # includes target_col (list or empty)
+feature_cols: ['Persist1Workday'] # includes target_col (list or empty)
 benchmark_col: # if empty need to define benchmark_persist_days
 benchmark_persist_days: 1  # calculate benchmark by persisting target_col by this many days
 remove_days: weekends
@@ -15,7 +15,7 @@ resample: 15min
 
 # model
 results_dir: ./results/
-clean_dir: True
+clean_dir: False
 units_layers: [1,0]
 dropout: [0,0]
 input_length: 1 # days
@@ -41,12 +41,13 @@ test_output: True
 
 # hyperparam search
 search: True
-units1: [1,2]
-units2: [0]
-dropouts: [0]
-input_lengths: [1] # days
-features_2D: [ [],
-            ['IMF3',IMF4]]
+continue_search: False
+units1: [4,8,12,24,48,96,128,256,512,1024]
+units2: [0,4,8,12,24,48,96,128,256,512,1024]
+dropouts: [0,0.1]
+input_lengths: [0.25,0.5,0.75,1,2,3,7,14] # days
+features_2D: [ ['Persist1Workday'],
+            ['Persist1Workday','IMF3',IMF4] ]
 
 # viz
 plot_style: 'seaborn-v0_8' # (empty), 'darkbackground', 'ggplot', 'fivethirtyeight', 'seaborn-v0_8'
