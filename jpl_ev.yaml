@@ -6,7 +6,7 @@ version: 1.6
 # pers1D nMAE all = 10.6%
 # pers7D nMAE all = 6.0%
 # pers1WD nMAE all = 5.1%
-site: jpl_ev_v1.4
+site: jpl_ev_1.6c
 filename: data/all_JPL_v5.csv
 index_col: Datetime
 data_col: Load
@@ -19,7 +19,7 @@ emd: True
 
 # model
 results_dir: ./results/
-clean_dir: False
+clean_dir: True
 units_layers: [256,256]
 dropout: [0,0]
 n_in: 96

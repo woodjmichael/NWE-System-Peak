@@ -27,18 +27,17 @@ from tensorflow.keras.optimizers import RMSprop,Adam
 from tensorflow.keras.backend import square, mean
 from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard, \
                                                                                 ReduceLROnPlateau
-
 import emd
 
 print(tf.config.list_physical_devices('GPU'))
 
 os.environ['TF_CPP_MIN_LOG_LEVEL'] = '2'
-plt.style.use('dark_background')#'seaborn-whitegrid')
+#plt.style.use('seaborn-whitegrid')# 'seaborn-whitegrid', 'dark_background')
 
-#pd.set_option('precision', 2)
 pd.options.display.float_format = '{:.2f}'.format
-#np.random.seed(42)
-#tf.random.set_seed(42) 
+
+np.random.seed(42)
+tf.random.set_seed(42) 
 
 class dotdict(dict):
     """ Create a dictionary that can be accessed with dot notation
@@ -310,8 +309,7 @@ class RunTheJoules:
                               n_samples:int,
                               x:int,
                               y:int,
-                              randomize=True,
-                              daily=False):
+                              randomize=True,):
         """
         Generator function for creating random batches of training-data.
 
@@ -335,24 +333,25 @@ class RunTheJoules:
         """
             
         while True:
-                # Allocate a new array for the batch of input-signals.
+                # Allocate a new array for the batch of input-signals
                 x_shape = (batch_size, n_in, n_x_features)
                 x_batch = np.zeros(shape=x_shape, dtype=np.float16)
 
-                # Allocate a new array for the batch of output-signals.
+                # Allocate a new array for the batch of output-signals
                 y_shape = (batch_size, n_out, n_y_targets)
                 y_batch = np.zeros(shape=y_shape, dtype=np.float16)
 
-                # Fill the batch with random sequences of data.
+                # Fill the batch with random sequences of data
                 for i in range(batch_size):
-                        # Get a random start-index.
-                        # This points somewhere into the training-data.
+                        # Get a random start-index
+                        # This points somewhere into the training-data
                         if randomize:
-                            idx = np.random.randint(n_samples - n_in - n_in)
+                            idx = np.random.randint(n_samples - n_in - n_out)
+                        # or not
                         else:
                             idx = i
                         
-                        # Copy the sequences of data starting at this index.
+                        # Copy the sequences of data starting at this index
                         x_batch[i] = x[idx:idx+n_in]
                         y_batch[i] = y[idx:idx+n_out]
                 
@@ -513,6 +512,8 @@ class RunTheJoules:
         Returns:
             tuple: (trained tf model, training history)
         """
+        
+        print(f'\n\n\\\ Training model: u1-{units_layers[0]} u2-{units_layers[1]} d-{dropout} n-{n_in} fs-{n_features_x}\n\n')  
         
         model = Sequential()
         
@@ -740,7 +741,7 @@ class RunTheJoules:
         # np
         #y_valid_naive_mse = naive_forecast_mse( y_valid[0,:,0],horizon=self.persist_lag)
 
-        # model                                                
+        # model                                              
         self.model, history = self.train_lstm_v6(  n_features_x, self.n_in, self.n_out, 
                                     path_checkpoint, train_gen, valid_data,
                                     units_layers, epochs,
@@ -931,7 +932,7 @@ class RunTheJoules:
                     for n in n_in:
                         for f in features:
                             search_space.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
-        shuffle(search_space)
+        #shuffle(search_space)
         
         
         # walk through search space
@@ -976,20 +977,20 @@ if __name__ == '__main__':
      
     jpl = RunTheJoules('jpl_ev.yaml')
     
-    h = jpl.run_them_fast()
+    #h = jpl.run_them_fast()
 
-    jpl.banana_clipper()
+    #jpl.banana_clipper()
 
-    # jpl.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
-    #                             [0,4,8,12,24,48,96,128,256], # units 2
-    #                             [0, 0.1],#0,0.1] # dropout
-    #                             [12,24,48,96,2*96,3*96], # n_in
-    #                             [   ['Load','Persist1Workday'], # features
-    #                                 #['Load','Persist','temp'],
-    #                                 ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
-    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
-    #                                 #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
-    #                                 #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
-    #                                 ])
+    jpl.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
+                                [0,4,8,12,24,48,96,128,256], # units 2
+                                [0, 0.1],#0,0.1] # dropout
+                                [12,24,48,96,2*96,3*96], # n_in
+                                [   ['Load','Persist1Workday'], # features
+                                    #['Load','Persist','temp'],
+                                    ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
+                                    #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
+                                    #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
+                                    #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
+                                    ])
     
     #jpl.analyze_hyperparam_search()
