@@ -25,8 +25,7 @@ from tensorflow.keras.models import Sequential
 from tensorflow.keras.layers import Input, Dense, GRU, LSTM, Embedding, Dropout
 from tensorflow.keras.optimizers import RMSprop,Adam
 from tensorflow.keras.backend import square, mean
-from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, TensorBoard, \
-                                                                                ReduceLROnPlateau
+from tensorflow.keras.callbacks import EarlyStopping, ModelCheckpoint, ReduceLROnPlateau, TerminateOnNaN
 import emd
 
 print(tf.config.list_physical_devices('GPU'))
@@ -578,6 +577,8 @@ class RunTheJoules:
                                                     verbose=verbose,
                                                     restore_best_weights=True)
         
+        callback_terminate_on_nan = TerminateOnNaN()
+        
         # callback_tensorboard = TensorBoard( log_dir='./logs/',
         #                                     histogram_freq=0,
         #                                     write_graph=False)
@@ -597,6 +598,7 @@ class RunTheJoules:
         
         callbacks = [ callback_early_stopping,
                     callback_checkpoint,
+                    callback_terminate_on_nan,
                     #callback_tensorboard,
                     #callback_reduce_lr,
                     ]
@@ -949,7 +951,7 @@ class RunTheJoules:
                     for n in n_in:
                         for f in features:
                             search_space.append({'u1':u1,'u2':u2,'d':d,'n':n,'f':f})
-        #shuffle(search_space)
+        shuffle(search_space)
         
         
         # walk through search space

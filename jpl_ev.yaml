@@ -19,7 +19,7 @@ emd: True
 
 # model
 results_dir: ./results/
-clean_dir: True
+clean_dir: False
 units_layers: [256,256]
 dropout: [0,0]
 n_in: 96
@@ -32,7 +32,7 @@ features_list_numbers: [3,4]
 calendar_features: False
 
 # training
-epochs: 1
+epochs: 300
 patience: 10
 plots: #'hx'
 verbose: 1
@@ -54,6 +54,6 @@ features_2D: [  ['Load'], # features
                 ['Load','Persist1Workday'], # features
                 ['Load','IMF3','IMF4'],
                 ['Load','Persist1Workday','IMF3','IMF4'],
-                ['Load','IMF1','IMF2','IMF3','IMF4','IMF5','IMF6','IMF7','IMF8','IMF9','IMF10'],
-                ['Load','Persist1Workday','IMF1','IMF2','IMF3','IMF4','IMF5','IMF6','IMF7','IMF8','IMF9','IMF10'],
+                #['Load','IMF1','IMF2','IMF3','IMF4','IMF5','IMF6','IMF7','IMF8','IMF9','IMF10'],
+                #['Load','Persist1Workday','IMF1','IMF2','IMF3','IMF4','IMF5','IMF6','IMF7','IMF8','IMF9','IMF10'],
                 ]
