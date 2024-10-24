@@ -3,10 +3,11 @@ version: 1.6
 # any configs here can be overwriteen by code
 
 # data
-# pers1D nMAE all = 10.6%
-# pers7D nMAE all = 6.0%
-# pers1WD nMAE all = 5.1%
-site: jpl_ev_241024
+# pers1D nMAEall=10.6%, nMSEall=0.0492, nMSEtrn=0.0478, nMSEvld=0.0526, nMSEtst=0.0512
+# pers7D nMAEall=6.0%, nMSEall=0.0229, nMSEtrn=0.0228, nMSEvld=0.0247, nMSEtst=0.0200
+# pers1WD nMAEall=5.1%, nMSEall=0.0159, nMSEtrn=0.0158, nMSEvld=0.0173, nMSEtst=0.0136
+
+site: jpl_ev_TEST
 filename: data/all_JPL_v5.csv
 index_col: Datetime
 data_col: Load
@@ -14,14 +15,14 @@ persist_col: #Persist
 persist_calc_days: 7 # int or False (then need a persist_col above)
 remove_days: weekends
 resample: 15min
-test_split: 0.1
+test_split: 0.05
 emd: True
-
-# model
 results_dir: ./results/
 clean_dir: False
-units_layers: [256,256]
-dropout: [0,0]
+
+# model
+units_layers: [12,96]
+dropout: [0.1,0.1]
 n_in: 96
 n_out: 96
 batch_size: 256
@@ -32,7 +33,7 @@ features_list_numbers: [3,4]
 calendar_features: False
 
 # training
-epochs: 300
+epochs: 100
 patience: 10
 plots: #'hx'
 verbose: 1
@@ -45,7 +46,7 @@ test_plots: False
 test_output: False
 
 # search
-search: True
+search: False
 units1: [4,8,12,24,48,96,128,256] # units 1
 units2: [0,4,8,12,24,48,96,128,256] # units 2
 dropouts: [0, 0.1] #0,0.1] # dropout

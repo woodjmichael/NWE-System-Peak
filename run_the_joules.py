@@ -604,7 +604,7 @@ class RunTheJoules:
                     ]
 
         if steps is None:
-            steps = (len(self.train) - n_in - n_out)//batch_size
+            steps = (len(self.train) - valid[0].shape[0] - n_in - n_out)//batch_size
 
         hx = model.fit( x=train,
                         epochs=epochs,
@@ -992,10 +992,10 @@ if __name__ == '__main__':
      
     jpl = RunTheJoules('jpl_ev.yaml')
     
-    #h = jpl.run_them_fast()
+    h = jpl.run_them_fast()
 
-    #jpl.banana_clipper()
+    jpl.banana_clipper()
     
-    jpl.random_search_warrant()
+    #jpl.random_search_warrant()
 
     #jpl.analyze_hyperparam_search()
