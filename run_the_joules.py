@@ -915,14 +915,14 @@ class RunTheJoules:
             u1 = int( s.split('_')[0][1:].split('-')[0] )
             u2 = int( s.split('_')[0][1:].split('-')[1] )
             d = float( s.split('_')[1][1:] )
-            n = int( s.split('_')[2][2:] )
-            flen = int( s.split('_')[3][4:] )
+            n = int( s.split('_')[2][1:] )
+            flen = int( s.split('_')[3][1:] )
             f = ['Load']
             if flen == 5:
                 f = f + [f'IMF{x}' for x in [4,5,6,9]]
             if flen == 13:
                 f = f + [f'IMF{x}' for x in range(1,13)]
-            search_space_completed.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
+            search_space_completed.append({'u1':u1,'u2':u2,'d':d,'n':n,'f':f})
                                         
         # build search space
         search_space = []
@@ -931,29 +931,30 @@ class RunTheJoules:
                 for d in dropout:
                     for n in n_in:
                         for f in features:
-                            search_space.append(dotdict({'u1':u1,'u2':u2,'d':d,'n':n,'f':f}))
+                            search_space.append({'u1':u1,'u2':u2,'d':d,'n':n,'f':f})
         #shuffle(search_space)
         
         
         # walk through search space
-        results = pd.DataFrame(columns=['units1','units2','dropout','n_in','features','mean_skill',
-                                        'positive_skills','epochs'])        
+        results = pd.DataFrame([],columns=['u1','u2','d','n','f','skMean','skPos','e'])        
         for s in [x for x in search_space if x not in search_space_completed]: # exlude existing 
             try:                
-                self.results_dir = main_results_dir + f'u{s.u1}-{s.u2}_d{s.d}_in{s.n}_flen{len(s.f)}/'
+                u1,u2,d,n,fs = s['u1'],s['u2'],s['d'],s['n'],len(s['f'])
+                self.results_dir = main_results_dir + f'u{u1}-{u2}_d{d}_n{n}_f{fs}/'
                 
                 if not os.path.exists(self.results_dir):
                     os.mkdir(self.results_dir)
-                h = self.run_them_fast(units_layers=[s.u1,s.u2],
-                                            dropout=[s.d]*2,
-                                            n_in=s.n,
-                                            features=s.f)
+                h = self.run_them_fast(units_layers=[u1,u2],
+                                            dropout=[d]*2,
+                                            n_in=n,
+                                            features=f)
                 mean_skill, positive_skills = self.banana_clipper()
-                r = {'mean_skill':mean_skill,'positive_skills':positive_skills,'epochs':len(h['loss'])}
+                r = {'skMean':mean_skill,'skPos':positive_skills,'e':len(h.history['loss'])}
                 s.update(r)
+                s['f'] = len(s['f'])
                 results.loc[len(results)] = s
                 results.to_csv(main_results_dir+'/results.csv')
-                model.analyze_hyperparam_search()
+                #self.analyze_hyperparam_search()
             except:
                 pass  
             
@@ -988,6 +989,7 @@ if __name__ == '__main__':
                                 [   ['Load','Persist1Workday'], # features
                                     #['Load','Persist','temp'],
                                     ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
+                                    ['Load','Persist1Workday',]+[f'IMF{x}' for x in range(1,11)]
                                     #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
                                     #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
                                     #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]

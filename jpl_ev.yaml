@@ -6,7 +6,7 @@ version: 1.6
 # pers1D nMAE all = 10.6%
 # pers7D nMAE all = 6.0%
 # pers1WD nMAE all = 5.1%
-site: jpl_ev_1.6c
+site: jpl_ev_241024
 filename: data/all_JPL_v5.csv
 index_col: Datetime
 data_col: Load
@@ -32,7 +32,7 @@ features_list_numbers: [3,4]
 calendar_features: False
 
 # training
-epochs: 100
+epochs: 300
 patience: 10
 plots: #'hx'
 verbose: 1
@@ -40,6 +40,6 @@ valid_split: 0.2
 loss: mse
 
 # testing
-forecast_freq: 1d # 1h or 1d
+forecast_freq: 1h # 1h or 1d
 test_plots: False
-test_output: True
+test_output: False
