@@ -169,6 +169,13 @@ class RunTheJoules:
         self.batch_size = cfg.batch_size
         self.forecast_freq = cfg.forecast_freq
         
+        self.search = cfg.search
+        self.units1 = cfg.units1
+        self.units2 = cfg.units2
+        self.dropouts = cfg.dropouts
+        self.ns = cfg.ns
+        self.features_2D = cfg.features_2D
+        
         if not os.path.exists(self.results_dir):
             os.mkdir(self.results_dir)
         else:
@@ -896,7 +903,12 @@ class RunTheJoules:
 
         return skills.mean(), len(skills[skills>0])/len(skills)
     
-    def random_search_warrant(self,units1:list,units2:list,dropout:list,n_in:list,features:list): 
+    def random_search_warrant(self,
+                              units1:list=None,
+                              units2:list=None,
+                              dropout:list=None,
+                              n_in:list=None,
+                              features:list=None): 
         """ Random search for best hyperparameters
 
         Args:
@@ -907,6 +919,11 @@ class RunTheJoules:
             features (list of str): all possible combinations of features
         """
         main_results_dir = self.results_dir
+        units1 = units1 if units1 is not None else self.units1
+        units2 = units2 if units2 is not None else self.units2
+        dropout = dropout if dropout is not None else self.dropouts
+        n_in = n_in if n_in is not None else self.ns
+        features = features if features is not None else self.features_2D
         
         # what are the already completed models?
         search_space_completed = []
@@ -981,18 +998,7 @@ if __name__ == '__main__':
     #h = jpl.run_them_fast()
 
     #jpl.banana_clipper()
-
-    jpl.random_search_warrant([4,8,12,24,48,96,128,256], # units 1
-                                [0,4,8,12,24,48,96,128,256], # units 2
-                                [0, 0.1],#0,0.1] # dropout
-                                [12,24,48,96,2*96,3*96], # n_in
-                                [   ['Load','Persist1Workday'], # features
-                                    #['Load','Persist','temp'],
-                                    ['Load','Persist1Workday',]+[f'IMF{x}' for x in [3,4]],
-                                    ['Load','Persist1Workday',]+[f'IMF{x}' for x in range(1,11)]
-                                    #['Load','Persist','temp']+[f'IMF{x}' for x in [4,5,6,9]],
-                                    #['Load','Persist',]+[f'IMF{x}' for x in range(1,13)],
-                                    #['Load','Persist','temp']+[f'IMF{x}' for x in range(1,13)]
-                                    ])
     
+    jpl.random_search_warrant()
+
     #jpl.analyze_hyperparam_search()
