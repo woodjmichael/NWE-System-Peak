@@ -929,19 +929,14 @@ class RunTheJoules:
         
         # what are the already completed models?
         search_space_completed = []
-        files = next(os.walk(main_results_dir))[1]
-        for s in files:
-            u1 = int( s.split('_')[0][1:].split('-')[0] )
-            u2 = int( s.split('_')[0][1:].split('-')[1] )
-            d = float( s.split('_')[1][1:] )
-            n = int( s.split('_')[2][1:] )
-            flen = int( s.split('_')[3][1:] )
-            f = ['Load']
-            if flen == 5:
-                f = f + [f'IMF{x}' for x in [4,5,6,9]]
-            if flen == 13:
-                f = f + [f'IMF{x}' for x in range(1,13)]
-            search_space_completed.append({'u1':u1,'u2':u2,'d':d,'n':n,'f':f})
+        # files = next(os.walk(main_results_dir))[1]
+        # for s in files:
+        #     u1 = int( s.split('_')[0][1:].split('-')[0] )
+        #     u2 = int( s.split('_')[0][1:].split('-')[1] )
+        #     d = float( s.split('_')[1][1:] )
+        #     n = int( s.split('_')[2][1:] )
+        #     fs = int( s.split('_')[3][1:] )
+        #     search_space_completed.append({'u1':u1,'u2':u2,'d':d,'n':n,'fs':fs})
                                         
         # build search space
         search_space = []
